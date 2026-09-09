@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>业务链路 · MQ 实验台</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" media="print" onload="this.media='all'"
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- ===================== 顶栏 + 主导航 ===================== -->
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true"></span>
+    <div>
+      <h1>MQ 实验台</h1>
+      <p>RabbitMQ 学习项目 mq-demo · 笔记《1.RabbitMQ》～《6.延迟消息》</p>
+    </div>
+  </div>
+  <nav class="nav" aria-label="主导航">
+    <a href="index.html">总览</a>
+    <a href="trade.html" class="on">业务链路</a>
+    <a href="reliability.html">消息可靠性</a>
+    <a href="consume.html">消费结果</a>
+  </nav>
+  <div class="topbar-side">
+    <span class="live" id="liveBadge" role="status" aria-atomic="true">
+      <i class="led" aria-hidden="true"></i><span id="liveText">连接中…</span>
+    </span>
+    <a class="mgmt" href="http://192.168.146.130:15672" target="_blank" rel="noopener">管理台</a>
+  </div>
+</header>
+
+<!-- ===================== 第一行：下单 + 支付/退款 ===================== -->
+<div class="cols">
+  <section class="panel" aria-labelledby="h-trade">
+    <header class="panel-head"><h2 id="h-trade">下单</h2>
+      <span class="route-tag">POST /order</span></header>
+
+    <div class="product-row" id="productRow"></div>
+
+    <div class="trade-line">
+      <label>用户 <input id="fUser" type="number" value="1" min="1"></label>
+      <label>数量 <input id="fCount" type="number" value="1" min="1"></label>
+      <button class="go" id="btnOrder">下单 · 发 10s 延迟消息</button>
+    </div>
+    <p class="fine">下单即锁定库存并发送 10 秒延迟消息；10 秒内不支付，订单会被自动取消并释放库存（两条延迟链路都触发，状态机幂等保证只取消一次）。</p>
+  </section>
+
+  <section class="panel" aria-labelledby="h-pay">
+    <header class="panel-head"><h2 id="h-pay">支付与退款</h2>
+      <span class="route-tag">本地消息表链路</span></header>
+
+    <label class="field">订单号
+      <input id="fOrderNo" placeholder="点下方订单表一行自动填入">
+    </label>
+    <div class="trade-line">
+      <label>手机号
+        <select id="fMobile">
+          <option value="13900001111">13900001111 正常</option>
+          <option value="13800000000">13800000000 黑名单（触发失败实验）</option>
+        </select>
+      </label>
+      <button class="go" id="btnPay">支付</button>
+      <button class="btn" id="btnRefund">退款</button>
+      <button class="btn ghost" id="btnQuery">查状态</button>
+    </div>
+    <pre class="detail" id="orderDetail">订单详情显示在这里（点订单表一行自动查询）。</pre>
+    <p class="fine">选黑名单手机号支付：短信服务会失败重试 3 次，最终进错误队列 —— 去「消息可靠性」页看重放。</p>
+  </section>
+</div>
+
+<!-- ===================== 第二行：订单列表 + 本地消息表 ===================== -->
+<div class="cols">
+  <section class="panel" aria-labelledby="h-orders">
+    <header class="panel-head"><h2 id="h-orders">订单列表</h2>
+      <span class="route-tag">GET /orders</span></header>
+    <div class="scroll-table">
+      <table aria-label="订单列表">
+        <thead><tr><th>订单号</th><th>商品</th><th class="num">金额</th><th>状态</th></tr></thead>
+        <tbody id="orderBody"></tbody>
+      </table>
+    </div>
+    <p class="fine">点任意一行 → 自动填入订单号并查询详情。</p>
+  </section>
+
+  <section class="panel" aria-labelledby="h-lm">
+    <header class="panel-head"><h2 id="h-lm">本地消息表</h2>
+      <span class="route-tag">发送端可靠性</span></header>
+    <div class="scroll-table short">
+      <table aria-label="本地消息表">
+        <thead><tr><th>messageId</th><th>状态</th><th class="num">重试</th></tr></thead>
+        <tbody id="lmBody"></tbody>
+      </table>
+    </div>
+    <div class="trade-line">
+      <button class="btn" id="btnCompensate">手动补偿重发</button>
+      <span class="fine" style="margin:0">定时任务每 30s 扫描未确认消息</span>
+    </div>
+    <p class="fine" id="lmStatusFine"></p>
+    <p class="fine">支付后消息先落库（SENDING）→ Confirm 回执到达后改 CONFIRMED；发送失败等补偿任务重发。</p>
+  </section>
+</div>
+
+<!-- ===================== 请求日志 ===================== -->
+<section class="panel one" aria-labelledby="h-log">
+  <header class="panel-head"><h2 id="h-log">请求日志</h2>
+    <button class="btn ghost" id="btnClearLog">清空</button></header>
+  <div class="console" id="logBox" aria-live="polite"></div>
+</section>
+
+<footer class="page-foot">
+  <span>mq-demo · publisher :8080 · 数据 3s 自动刷新</span>
+  <span>对应笔记：2.RabbitMQ基础「二. 业务示例」 · 4.生产者的可靠性 · 6.延迟消息</span>
+</footer>
+
+<script src="js/common.js"></script>
+<script src="js/trade.js"></script>
+</body>
+</html>

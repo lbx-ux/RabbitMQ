@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>总览 · MQ 实验台</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" media="print" onload="this.media='all'"
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- ===================== 顶栏 + 主导航（每页相同） ===================== -->
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true"></span>
+    <div>
+      <h1>MQ 实验台</h1>
+      <p>RabbitMQ 学习项目 mq-demo · 笔记《1.RabbitMQ》～《6.延迟消息》</p>
+    </div>
+  </div>
+  <nav class="nav" aria-label="主导航">
+    <a href="index.html" class="on">总览</a>
+    <a href="trade.html">业务链路</a>
+    <a href="reliability.html">消息可靠性</a>
+    <a href="consume.html">消费结果</a>
+  </nav>
+  <div class="topbar-side">
+    <span class="live" id="liveBadge" role="status" aria-atomic="true">
+      <i class="led" aria-hidden="true"></i><span id="liveText">连接中…</span>
+    </span>
+    <a class="mgmt" href="http://192.168.146.130:15672" target="_blank" rel="noopener">管理台</a>
+  </div>
+</header>
+
+<!-- ===================== 拓扑示意（本页的「签名」区块） ===================== -->
+<section class="topo" aria-label="消息拓扑示意">
+  <svg viewBox="0 0 1060 212" role="img" aria-label="支付链路与延迟链路的交换机队列拓扑">
+    <!-- 支付链路（上行） -->
+    <g class="t-node t-ex">
+      <rect x="8" y="44" width="172" height="36" rx="6"/>
+      <text x="20" y="59" class="t-name">demo.pay.topic</text>
+      <text x="20" y="72" class="t-sub">topic 交换机</text>
+    </g>
+    <path class="t-wire" d="M180 62 H296 V23 H430"/>
+    <path class="t-wire" d="M180 62 H430"/>
+    <path class="t-wire" d="M180 62 H296 V101 H430"/>
+    <circle class="t-flow f1" cx="298" cy="23" r="2.6"/>
+    <circle class="t-flow f2" cx="298" cy="62" r="2.6"/>
+    <circle class="t-flow f3" cx="298" cy="101" r="2.6"/>
+    <text x="424" y="17"  class="t-key" text-anchor="end">pay.success</text>
+    <text x="424" y="56"  class="t-key" text-anchor="end">pay.*</text>
+    <text x="424" y="95"  class="t-key" text-anchor="end">pay.success</text>
+
+    <g class="t-node t-q">
+      <rect x="430" y="8"   width="212" height="30" rx="6"/>
+      <text x="442" y="27" class="t-name">demo.trade.pay.queue</text>
+    </g>
+    <g class="t-node t-q">
+      <rect x="430" y="47"  width="212" height="30" rx="6"/>
+      <text x="442" y="66" class="t-name">demo.points.pay.queue</text>
+    </g>
+    <g class="t-node t-q">
+      <rect x="430" y="86"  width="212" height="30" rx="6"/>
+      <text x="442" y="105" class="t-name">demo.sms.pay.queue</text>
+    </g>
+
+    <path class="t-wire thin" d="M642 23 H662"/>
+    <path class="t-wire thin" d="M642 62 H662"/>
+    <path class="t-wire thin" d="M642 101 H662"/>
+    <text x="670" y="27"  class="t-sub">交易服务 · 状态机幂等</text>
+    <text x="670" y="66"  class="t-sub">积分服务 · Redis+唯一索引</text>
+    <text x="670" y="105" class="t-sub">短信服务 · 失败重试→死信</text>
+
+    <!-- 延迟链路（下行） -->
+    <g class="t-node t-ex">
+      <rect x="8" y="152" width="150" height="30" rx="6"/>
+      <text x="20" y="171" class="t-name">下单 · 10s 未支付</text>
+    </g>
+    <path class="t-wire" d="M158 160 H226 V148 H368"/>
+    <path class="t-wire" d="M158 168 H226 V182 H368"/>
+    <text x="360" y="142" class="t-key" text-anchor="end">插件 x-delay=10s</text>
+    <text x="360" y="196" class="t-key" text-anchor="end">TTL 10s → DLX</text>
+    <g class="t-node t-q">
+      <rect x="368" y="135" width="196" height="26" rx="6"/>
+      <text x="380" y="152" class="t-name">demo.order.delay.queue</text>
+    </g>
+    <g class="t-node t-q">
+      <rect x="368" y="169" width="196" height="26" rx="6"/>
+      <text x="380" y="186" class="t-name">demo.order.ttl.queue</text>
+    </g>
+    <path class="t-wire" d="M564 182 H606 V148 H606"/>
+    <g class="t-node t-q">
+      <rect x="606" y="135" width="150" height="26" rx="6"/>
+      <text x="618" y="152" class="t-name">→ dlx.queue</text>
+    </g>
+    <path class="t-wire" d="M756 148 H806"/>
+    <text x="814" y="152" class="t-sub">状态机幂等取消 + 释放库存</text>
+  </svg>
+</section>
+
+<!-- ===================== KPI 信号灯行 ===================== -->
+<section class="kpis" aria-label="当前状态">
+  <div class="kpi">
+    <i class="led amber" aria-hidden="true"></i>
+    <div><b id="kpiPending">–</b><span>待支付</span></div>
+  </div>
+  <div class="kpi">
+    <i class="led green" aria-hidden="true"></i>
+    <div><b id="kpiPaid">–</b><span>已支付</span></div>
+  </div>
+  <div class="kpi">
+    <i class="led red" aria-hidden="true"></i>
+    <div><b id="kpiMsgErr">–</b><span>待处理错误</span></div>
+  </div>
+  <div class="kpi">
+    <i class="led blue" aria-hidden="true"></i>
+    <div><b id="kpiMsgRetry">–</b><span>补偿中</span></div>
+  </div>
+</section>
+
+<!-- ===================== 学习路线（三步引导卡片） ===================== -->
+<div class="sec">
+  <h2>学习路线</h2>
+  <span class="fine">按顺序做实验，每一步都能在页面上亲眼看到现象</span>
+</div>
+<div class="guides">
+  <a class="guide" href="trade.html">
+    <h3>① 业务链路 —— 先让消息跑起来</h3>
+    <div class="step"><i>1</i><span>选商品下单，10 秒内支付，看订单状态 0→1 流转</span></div>
+    <div class="step"><i>2</i><span>下单后干等 10 秒，看订单被延迟消息自动取消</span></div>
+    <div class="step"><i>3</i><span>退款，看状态机把状态改为已退款并扣回积分</span></div>
+    <span class="go-hint">进入业务链路 →</span>
+  </a>
+  <a class="guide" href="reliability.html">
+    <h3>② 消息可靠性 —— 故意弄丢它</h3>
+    <div class="step"><i>1</i><span>支付时看本地消息表：落库 → 确认 → 补偿的完整流转</span></div>
+    <div class="step"><i>2</i><span>用黑名单手机号支付，看短信重试 3 次后进错误队列</span></div>
+    <div class="step"><i>3</i><span>在错误消息里点「重放」，消息回原交换机重新消费</span></div>
+    <span class="go-hint">进入消息可靠性 →</span>
+  </a>
+  <a class="guide" href="consume.html">
+    <h3>③ 消费结果 —— 验证幂等防线</h3>
+    <div class="step"><i>1</i><span>积分流水：同一订单永远只有一条 +100 记录</span></div>
+    <div class="step"><i>2</i><span>短信记录：黑名单 FAILED，正常手机号 SENT</span></div>
+    <div class="step"><i>3</i><span>幂等记录：每条消息的 messageId 只落库一次</span></div>
+    <span class="go-hint">进入消费结果 →</span>
+  </a>
+</div>
+
+<!-- ===================== 配套笔记 ===================== -->
+<div class="sec">
+  <h2>配套笔记</h2>
+  <span class="fine">mq-note 目录 · 需先启动笔记服务（8501 端口）</span>
+</div>
+<div class="notes">
+  <a class="note" href="http://localhost:8501/1.RabbitMQ.md" target="_blank" rel="noopener">
+    <b>1. RabbitMQ</b><span>部署 · 收发消息 · 数据隔离</span></a>
+  <a class="note" href="http://localhost:8501/2.RabbitMQ基础.md" target="_blank" rel="noopener">
+    <b>2. RabbitMQ 基础</b><span>三大核心 · 交换机 · 消息转换器</span></a>
+  <a class="note" href="http://localhost:8501/3.数据持久化.md" target="_blank" rel="noopener">
+    <b>3. 数据持久化</b><span>持久化 · LazyQueue · Quorum</span></a>
+  <a class="note" href="http://localhost:8501/4.生产者的可靠性.md" target="_blank" rel="noopener">
+    <b>4. 生产者的可靠性</b><span>重试 · Confirm/Return · 本地消息表</span></a>
+  <a class="note" href="http://localhost:8501/5.消费者的可靠性.md" target="_blank" rel="noopener">
+    <b>5. 消费者的可靠性</b><span>确认 · 重试 · 死信兜底 · 幂等</span></a>
+  <a class="note" href="http://localhost:8501/6.延迟消息.md" target="_blank" rel="noopener">
+    <b>6. 延迟消息</b><span>死信交换机 · 延迟插件</span></a>
+</div>
+
+<!-- ===================== 请求日志 ===================== -->
+<section class="panel one" aria-labelledby="h-log" style="margin-top:22px">
+  <header class="panel-head"><h2 id="h-log">请求日志</h2>
+    <button class="btn ghost" id="btnClearLog">清空</button></header>
+  <div class="console" id="logBox" aria-live="polite"></div>
+</section>
+
+<footer class="page-foot">
+  <span>mq-demo · publisher :8080 · consumer :8082 · 数据 3s 自动刷新</span>
+  <span>对应文档：mq-note 下的 6 篇学习笔记</span>
+</footer>
+
+<script src="js/common.js"></script>
+<script src="js/overview.js"></script>
+</body>
+</html>

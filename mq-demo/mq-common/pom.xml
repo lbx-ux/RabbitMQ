@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 公共模块：被 publisher 和 consumer 共同依赖 -->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.study</groupId>
+        <artifactId>mq-demo</artifactId>
+        <version>1.0.0</version>
+    </parent>
+
+    <artifactId>mq-common</artifactId>
+
+    <dependencies>
+        <!-- common 只放「无副作用」的东西：常量、DTO、配置类。
+             不需要 web/redis，只留 AMQP 与基础包，保持轻量。 -->
+    </dependencies>
+</project>

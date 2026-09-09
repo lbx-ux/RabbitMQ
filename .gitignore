@@ -1,0 +1,39 @@
+# ---- Java / Maven ----
+target/
+*.class
+*.jar
+!.mvn/wrapper/maven-wrapper.jar
+*.war
+*.ear
+
+# ---- IDE ----
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.classpath
+.project
+.settings/
+.factorypath
+
+# ---- Logs ----
+*.log
+logs/
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- Env / local config ----
+*.local
+application-local.yaml
+application-local.yml
+.idea/dataSources/
+.claude/
+launch.json
+
+# ---- Frontend ----
+node_modules/
+dist/

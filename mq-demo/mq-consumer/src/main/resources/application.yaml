@@ -1,0 +1,68 @@
+server:
+  port: 8082   # 8081 被本机 Nexus 服务占用，改用 8082
+
+spring:
+  application:
+    name: mq-consumer
+  datasource:
+    url: jdbc:mysql://192.168.146.130:3306/mq_demo?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&createDatabaseIfNotExist=true&allowPublicKeyRetrieval=true&useSSL=false
+    username: root
+    password: 123456
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
+  # 注意：Boot 2.x 的 Redis 配置前缀是 spring.redis（Boot 3.x 才改成 spring.data.redis）
+  redis:
+    host: 192.168.146.130
+    port: 6379
+    password: 123456
+  rabbitmq:
+    # ==================== 连接配置 ====================
+    host: 192.168.146.130
+    port: 5672
+    username: admin
+    password: admin
+    virtual-host: /
+    connection-timeout: 1s
+
+    # ==================== 消费者配置（笔记 5.消费者的可靠性 §1/§2/§3）====================
+    listener:
+      simple:
+        # prefetch：每个消费者每次最多预取 1 条消息，处理完才取下一条。
+        # 这是「能者多劳」的关键（笔记 2.RabbitMQ基础 §3.4 能者多劳）：
+        #   prefetch 大 = 消息被平均分配，快消费者等慢消费者；
+        #   prefetch=1 = 谁空闲谁先领，充分利用每个消费者的能力。
+        prefetch: 1
+
+        # acknowledge-mode 消费者确认模式（笔记 5.消费者的可靠性 §1 消费者确认机制）：
+        #   none   投递即 ack，消息立刻删除 —— 不安全，别用
+        #   manual 手动调 channel.basicAck/basicNack —— 灵活但业务入侵
+        #   auto   Spring AOP 环绕增强：正常执行->ack；
+        #          业务异常(RuntimeException等)->nack（触发重试/重投）；
+        #          消息转换/校验异常(MessageConversionException)->reject（丢弃）
+        acknowledge-mode: auto
+
+        # 消费者失败重试：本地重试而不是无限 requeue 回 MQ（笔记 5.消费者的可靠性 §2 失败重试机制）
+        retry:
+          enabled: true             # 开启本地重试（失败消息不会无限 requeue）
+          initial-interval: 1000ms  # 第一次重试等 1 秒
+          multiplier: 2             # 每次翻倍：1s -> 2s -> 4s（指数退避）
+          max-attempts: 3           # 最多尝试 3 次（1 次原始 + 2 次重试）
+          max-interval: 10000ms     # 重试间隔上限 10 秒
+          stateless: true           # true=无状态重试；业务含事务时建议 false（有状态）
+
+    # 消费者端一般不需要生产者重试/确认配置，保持默认即可
+
+  jackson:
+    time-zone: Asia/Shanghai
+
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+    map-underscore-to-camel-case: true
+
+logging:
+  level:
+    com.study.mq: debug

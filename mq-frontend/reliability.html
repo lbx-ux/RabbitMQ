@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>消息可靠性 · MQ 实验台</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" media="print" onload="this.media='all'"
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- ===================== 顶栏 + 主导航 ===================== -->
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true"></span>
+    <div>
+      <h1>MQ 实验台</h1>
+      <p>RabbitMQ 学习项目 mq-demo · 笔记《1.RabbitMQ》～《6.延迟消息》</p>
+    </div>
+  </div>
+  <nav class="nav" aria-label="主导航">
+    <a href="index.html">总览</a>
+    <a href="trade.html">业务链路</a>
+    <a href="reliability.html" class="on">消息可靠性</a>
+    <a href="consume.html">消费结果</a>
+  </nav>
+  <div class="topbar-side">
+    <span class="live" id="liveBadge" role="status" aria-atomic="true">
+      <i class="led" aria-hidden="true"></i><span id="liveText">连接中…</span>
+    </span>
+    <a class="mgmt" href="http://192.168.146.130:15672" target="_blank" rel="noopener">管理台</a>
+  </div>
+</header>
+
+<!-- ===================== 说明条 ===================== -->
+<section class="panel one" style="padding:13px 18px">
+  <p class="fine" style="margin:0">
+    <b style="color:var(--ink)">这一页看「消息不丢」的四层防线：</b>
+    生产者侧 —— ① 本地消息表先落库再发送（事务一致）→ ② Confirm/Return 回执感知丢失 → ③ 30s 定时补偿重发；
+    消费者侧 —— ④ 本地重试 3 次（1s/2s/4s）→ 耗尽后 RepublishMessageRecoverer 转发 error.queue 落库，人工修复后一键重放。
+    对应笔记 4.生产者的可靠性 · 5.消费者的可靠性。
+  </p>
+</section>
+
+<!-- ===================== 第一行：发送端可靠性 ===================== -->
+<div class="cols">
+  <section class="panel" aria-labelledby="h-send">
+    <header class="panel-head"><h2 id="h-send">发送端 · Confirm 状态</h2>
+      <span class="route-tag">publisher :8080</span></header>
+    <div class="scroll-table">
+      <table aria-label="本地消息表">
+        <thead><tr><th>messageId</th><th>状态</th><th class="num">重试</th></tr></thead>
+        <tbody id="lmBody"></tbody>
+      </table>
+    </div>
+    <div class="trade-line">
+      <button class="btn" id="btnCompensate">手动补偿重发</button>
+      <span class="fine" style="margin:0">定时任务每 30s 扫描</span>
+    </div>
+    <p class="fine" id="lmStatusFine"></p>
+    <p class="fine">SENDING = 已落库等 Confirm；CONFIRMED = Broker 已确认；失败/超时由补偿任务重发（指数退避，最多 3 次）。</p>
+  </section>
+
+  <section class="panel" aria-labelledby="h-err">
+    <header class="panel-head"><h2 id="h-err">消费端 · 错误消息兜底</h2>
+      <span class="route-tag">重试耗尽 → error.queue 落库</span></header>
+    <div class="scroll-table">
+      <table aria-label="错误消息">
+        <thead><tr><th>id</th><th>订单</th><th>失败原因</th><th>状态</th><th></th></tr></thead>
+        <tbody id="errBody"></tbody>
+      </table>
+    </div>
+    <p class="fine">产生一条：去「业务链路」页用黑名单手机号 13800000000 支付。短信服务重试 3 次耗尽后进这里；点「重放」删幂等 key 后发回原交换机，去「消费结果」页看重新消费的结果。</p>
+  </section>
+</div>
+
+<!-- ===================== 第二行：消费记录（幂等防线） ===================== -->
+<div class="cols3">
+  <section class="panel" aria-labelledby="h-pts">
+    <header class="panel-head"><h2 id="h-pts">积分流水</h2>
+      <span class="route-tag">唯一索引幂等</span></header>
+    <div class="scroll-table short">
+      <table><thead><tr><th>订单</th><th class="num">积分</th><th>类型</th></tr></thead>
+      <tbody id="ptBody"></tbody></table>
+    </div>
+    <p class="fine">uk_order_no 唯一索引：同一订单重复消息只会落一条 +100。</p>
+  </section>
+  <section class="panel" aria-labelledby="h-sms">
+    <header class="panel-head"><h2 id="h-sms">短信记录</h2>
+      <span class="route-tag">失败重试</span></header>
+    <div class="scroll-table short">
+      <table><thead><tr><th>手机号</th><th>状态</th></tr></thead>
+      <tbody id="smsBody"></tbody></table>
+    </div>
+    <p class="fine">黑名单 FAILED 后本地重试 3 次，仍失败才进错误队列。</p>
+  </section>
+  <section class="panel" aria-labelledby="h-idem">
+    <header class="panel-head"><h2 id="h-idem">幂等记录</h2>
+      <span class="route-tag">SETNX + 唯一索引</span></header>
+    <div class="scroll-table short">
+      <table><thead><tr><th>messageId</th><th>消费时间</th></tr></thead>
+      <tbody id="idemBody"></tbody></table>
+    </div>
+    <p class="fine">每条消息的 messageId 只落库一次 —— 重复投递在这里被挡下。</p>
+  </section>
+</div>
+
+<!-- ===================== 请求日志 ===================== -->
+<section class="panel one" aria-labelledby="h-log">
+  <header class="panel-head"><h2 id="h-log">请求日志</h2>
+    <button class="btn ghost" id="btnClearLog">清空</button></header>
+  <div class="console" id="logBox" aria-live="polite"></div>
+</section>
+
+<footer class="page-foot">
+  <span>mq-demo · publisher :8080 · consumer :8082 · 数据 3s 自动刷新</span>
+  <span>对应笔记：4.生产者的可靠性 · 5.消费者的可靠性</span>
+</footer>
+
+<script src="js/common.js"></script>
+<script src="js/reliability.js"></script>
+</body>
+</html>

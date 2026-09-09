@@ -1,0 +1,64 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: mq-publisher
+  datasource:
+    # createDatabaseIfNotExist=true：第一次启动自动创建 mq_demo 库（配合 schema.sql 建表）
+    url: jdbc:mysql://192.168.146.130:3306/mq_demo?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&createDatabaseIfNotExist=true&allowPublicKeyRetrieval=true&useSSL=false
+    username: root
+    password: 123456
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  sql:
+    init:
+      # 启动时执行 schema.sql（CREATE TABLE IF NOT EXISTS + INSERT IGNORE，可重复执行）
+      mode: always
+      schema-locations: classpath:schema.sql
+  # 注意：Boot 2.x 的 Redis 配置前缀是 spring.redis（Boot 3.x 才改成 spring.data.redis）
+  redis:
+    host: 192.168.146.130
+    port: 6379
+    password: 123456
+  rabbitmq:
+    # ==================== 连接配置 ====================
+    host: 192.168.146.130       # RabbitMQ 服务器 IP（与笔记 1.RabbitMQ 一致，Docker 部署）
+    port: 5672                  # 通信端口（15672 是管理台端口，代码连的是 5672）
+    username: admin             # 登录账号
+    password: admin             # 登录密码
+    virtual-host: /             # 虚拟主机：数据隔离单位（笔记 1.RabbitMQ §3 数据隔离）
+    connection-timeout: 1s      # 连接超时时间
+
+    # ==================== 生产者确认机制（笔记 4.生产者的可靠性 §2/§3）====================
+    # publisher-confirm-type 三种取值：
+    #   none       关闭（默认）
+    #   simple     同步阻塞等回执（性能差）
+    #   correlated 异步回调（推荐）—— 配合 CorrelationData 使用
+    publisher-confirm-type: correlated
+    # Publisher Return：消息到了交换机但路由不到队列时，把消息【原路退回】给生产者
+    publisher-returns: true
+
+    # ==================== 生产者重试机制（笔记 4.生产者的可靠性 §1）====================
+    # 注意：这是【阻塞式】重试——重试等待期间当前线程被卡住！
+    # 对性能敏感的场景建议禁用，或把发送代码丢进异步线程执行。
+    template:
+      # 路由失败时把消息退回生产者，ReturnsCallback 才会被触发（笔记 4.生产者的可靠性 §3.1）
+      # （Boot 2.7 中 publisher-returns=true 已隐含 mandatory=true，这里显式声明便于对照笔记）
+      mandatory: true
+      retry:
+        enabled: true             # 开启超时重试
+        initial-interval: 1000ms  # 失败后初始等待 1 秒
+        multiplier: 1             # 每次等待时长倍数（1 = 固定间隔）
+        max-attempts: 3           # 最多尝试 3 次
+
+  jackson:
+    time-zone: Asia/Shanghai
+
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl  # 打印 SQL，方便学习观察
+    map-underscore-to-camel-case: true
+
+logging:
+  level:
+    com.study.mq: debug
