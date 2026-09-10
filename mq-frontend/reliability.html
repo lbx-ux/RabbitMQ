@@ -18,7 +18,6 @@
     <span class="brand-mark" aria-hidden="true"></span>
     <div>
       <h1>MQ 实验台</h1>
-      <p>RabbitMQ 学习项目 mq-demo · 笔记《1.RabbitMQ》～《6.延迟消息》</p>
     </div>
   </div>
   <nav class="nav" aria-label="主导航">
@@ -26,6 +25,7 @@
     <a href="trade.html">业务链路</a>
     <a href="reliability.html" class="on">消息可靠性</a>
     <a href="consume.html">消费结果</a>
+    <a href="notes.html">学习笔记</a>
   </nav>
   <div class="topbar-side">
     <span class="live" id="liveBadge" role="status" aria-atomic="true">
@@ -53,7 +53,7 @@
     <div class="scroll-table">
       <table aria-label="本地消息表">
         <thead><tr><th>messageId</th><th>状态</th><th class="num">重试</th></tr></thead>
-        <tbody id="lmBody"></tbody>
+        <tbody id="lmBody"><tr><td colspan="3" class="empty">等待后端数据…（支付一笔后出现 SENDING → CONFIRMED 流转）</td></tr></tbody>
       </table>
     </div>
     <div class="trade-line">
@@ -70,7 +70,7 @@
     <div class="scroll-table">
       <table aria-label="错误消息">
         <thead><tr><th>id</th><th>订单</th><th>失败原因</th><th>状态</th><th></th></tr></thead>
-        <tbody id="errBody"></tbody>
+        <tbody id="errBody"><tr><td colspan="5" class="empty">等待后端数据…（黑名单手机号支付后会在这里出现错误消息）</td></tr></tbody>
       </table>
     </div>
     <p class="fine">产生一条：去「业务链路」页用黑名单手机号 13800000000 支付。短信服务重试 3 次耗尽后进这里；点「重放」删幂等 key 后发回原交换机，去「消费结果」页看重新消费的结果。</p>
@@ -84,7 +84,7 @@
       <span class="route-tag">唯一索引幂等</span></header>
     <div class="scroll-table short">
       <table><thead><tr><th>订单</th><th class="num">积分</th><th>类型</th></tr></thead>
-      <tbody id="ptBody"></tbody></table>
+      <tbody id="ptBody"><tr><td colspan="3" class="empty">等待后端数据…（同一订单重复消息只落一条 +100）</td></tr></tbody></table>
     </div>
     <p class="fine">uk_order_no 唯一索引：同一订单重复消息只会落一条 +100。</p>
   </section>
@@ -93,7 +93,7 @@
       <span class="route-tag">失败重试</span></header>
     <div class="scroll-table short">
       <table><thead><tr><th>手机号</th><th>状态</th></tr></thead>
-      <tbody id="smsBody"></tbody></table>
+      <tbody id="smsBody"><tr><td colspan="3" class="empty">等待后端数据…（黑名单 FAILED 后本地重试 3 次）</td></tr></tbody></table>
     </div>
     <p class="fine">黑名单 FAILED 后本地重试 3 次，仍失败才进错误队列。</p>
   </section>
@@ -102,7 +102,7 @@
       <span class="route-tag">SETNX + 唯一索引</span></header>
     <div class="scroll-table short">
       <table><thead><tr><th>messageId</th><th>消费时间</th></tr></thead>
-      <tbody id="idemBody"></tbody></table>
+      <tbody id="idemBody"><tr><td colspan="2" class="empty">等待后端数据…（每条消息消费成功后落一条记录）</td></tr></tbody></table>
     </div>
     <p class="fine">每条消息的 messageId 只落库一次 —— 重复投递在这里被挡下。</p>
   </section>

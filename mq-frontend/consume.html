@@ -18,7 +18,6 @@
     <span class="brand-mark" aria-hidden="true"></span>
     <div>
       <h1>MQ 实验台</h1>
-      <p>RabbitMQ 学习项目 mq-demo · 笔记《1.RabbitMQ》～《6.延迟消息》</p>
     </div>
   </div>
   <nav class="nav" aria-label="主导航">
@@ -26,6 +25,7 @@
     <a href="trade.html">业务链路</a>
     <a href="reliability.html">消息可靠性</a>
     <a href="consume.html" class="on">消费结果</a>
+    <a href="notes.html">学习笔记</a>
   </nav>
   <div class="topbar-side">
     <span class="live" id="liveBadge" role="status" aria-atomic="true">
@@ -38,42 +38,41 @@
 <!-- ===================== 说明条 ===================== -->
 <section class="panel one" style="padding:13px 18px">
   <p class="fine" style="margin:0">
-    <b style="color:var(--ink)">这一页验证「来多少遍结果都一样」：</b>
-    每张表对应一道幂等防线 —— 积分流水靠数据库唯一索引兜底，短信记录展示失败重试的结果，
-    幂等记录证明每条消息的 messageId 只会被处理一次。数据 3 秒自动刷新。对应笔记 5.消费者的可靠性 §4。
+    <b style="color:var(--ink)">这一页看「消息被消费之后」的结果：</b>
+    积分服务每笔支付只加一次分（唯一索引兜底）；短信服务黑名单手机号会 FAILED 并自动重试；
+    幂等表记录每条消息的 messageId，重复投递在这里被挡下。
+    在「业务链路」页下单支付后，等 3 秒即可看到数据刷新。
   </p>
 </section>
 
-<!-- ===================== 三张消费结果表 ===================== -->
+<!-- ===================== 三列：积分 / 短信 / 幂等 ===================== -->
 <div class="cols3">
   <section class="panel" aria-labelledby="h-pts">
     <header class="panel-head"><h2 id="h-pts">积分流水</h2>
-      <span class="route-tag">唯一索引幂等</span></header>
-    <div class="scroll-table">
+      <span class="route-tag">consumer :8082</span></header>
+    <div class="scroll-table short">
       <table><thead><tr><th>订单</th><th class="num">积分</th><th>类型</th></tr></thead>
-      <tbody id="ptBody"></tbody></table>
+      <tbody id="ptBody"><tr><td colspan="3" class="empty">等待后端数据…（支付一笔后出现 +100 记录）</td></tr></tbody></table>
     </div>
-    <p class="fine">支付成功 +100，退款扣回。uk_order_no 唯一索引保证同一订单永远只有一条正向记录。</p>
+    <p class="fine">支付成功 +100，退款扣回 -100 —— 同一订单永远只有一条加分配。</p>
   </section>
-
   <section class="panel" aria-labelledby="h-sms">
     <header class="panel-head"><h2 id="h-sms">短信记录</h2>
-      <span class="route-tag">失败重试结果</span></header>
-    <div class="scroll-table">
+      <span class="route-tag">consumer :8082</span></header>
+    <div class="scroll-table short">
       <table><thead><tr><th>手机号</th><th>状态</th><th>内容</th></tr></thead>
-      <tbody id="smsBody"></tbody></table>
+      <tbody id="smsBody"><tr><td colspan="3" class="empty">等待后端数据…（黑名单手机号会 FAILED）</td></tr></tbody></table>
     </div>
-    <p class="fine">正常手机号 SENT；黑名单 13800000000 FAILED（重试 3 次耗尽后进错误队列）。</p>
+    <p class="fine">13800000000 是黑名单：FAILED → 本地重试 3 次 → 进错误队列，去「消息可靠性」页重放。</p>
   </section>
-
   <section class="panel" aria-labelledby="h-idem">
     <header class="panel-head"><h2 id="h-idem">幂等记录</h2>
-      <span class="route-tag">SETNX 挡板落库</span></header>
-    <div class="scroll-table">
-      <table><thead><tr><th>messageId</th><th>消费时间</th></tr></thead>
-      <tbody id="idemBody"></tbody></table>
+      <span class="route-tag">Redis SETNX + 唯一索引</span></header>
+    <div class="scroll-table short">
+      <table><thead><tr><th>messageId</th><th class="num">消费时间</th></tr></thead>
+      <tbody id="idemBody"><tr><td colspan="3" class="empty">等待后端数据…（每条消息消费成功后落一条）</td></tr></tbody></table>
     </div>
-    <p class="fine">消费成功才落库；重复投递的消息在 Redis 挡板处被拦截，不会出现第二行。</p>
+    <p class="fine">每条消息消费成功才落一条记录 —— MQ 重试导致的重复投递在这里被幂等挡下。</p>
   </section>
 </div>
 
@@ -85,8 +84,8 @@
 </section>
 
 <footer class="page-foot">
-  <span>mq-demo · consumer :8082 · 数据 3s 自动刷新</span>
-  <span>对应笔记：5.消费者的可靠性 §4 业务幂等性</span>
+  <span>mq-demo · publisher :8080 · consumer :8082 · 数据 3s 自动刷新</span>
+  <span>对应笔记：5.消费者的可靠性</span>
 </footer>
 
 <script src="js/common.js"></script>

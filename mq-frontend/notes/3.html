@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>数据持久化 · MQ 实验台</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" media="print" onload="this.media='all'"
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true"></span>
+    <div>
+      <h1>MQ 实验台</h1>
+    </div>
+  </div>
+  <nav class="nav" aria-label="主导航"><a href="../index.html">总览</a><a href="../trade.html">业务链路</a><a href="../reliability.html">消息可靠性</a><a href="../consume.html">消费结果</a><a href="../notes.html" class="on">学习笔记</a></nav>
+  <div class="topbar-side">
+    <a class="mgmt" href="http://192.168.146.130:15672" target="_blank" rel="noopener">管理台</a>
+  </div>
+</header>
+<div class="note-layout">
+<aside class="toc" aria-label="目录"><div class="toc-title">目录</div><a class="lv2" href="#sec-1">1. 数据持久化</a><a class="lv3" href="#sec-2">1. 交换机持久化</a><a class="lv3" href="#sec-3">2. 队列持久化</a><a class="lv3" href="#sec-4">3. 消息持久化</a><a class="lv3" href="#sec-5">4. 注解</a><a class="lv2" href="#sec-6">2. LazyQueue</a><a class="lv2" href="#sec-7">3. Quorum</a><a class="lv2" href="#sec-8">4. 对比</a></aside>
+<div class="md-wrap">
+  <div class="md-head">
+    <h2>《3. 数据持久化》</h2>
+    <p class="fine">持久化 · LazyQueue · Quorum</p>
+  </div>
+  <article class="md-body">
+<h1>MQ的可靠性</h1>
+<p>消息到达MQ以后，如果MQ不能及时保存，也会导致消息丢失，所以MQ的可靠性也非常重要。</p>
+<h2 id="sec-1">1. 数据持久化</h2>
+<p>为了提升性能，默认情况下MQ的数据都是在内存存储的临时数据，重启后就会消失。为了保证数据的可靠性，必须配置数据持久化，包括：</p>
+<ul>
+<li>交换机持久化</li>
+<li>队列持久化</li>
+<li>消息持久化</li>
+</ul>
+<p>如果说发送端确认机制是为了防止消息“死在半路上”，那么持久化机制就是为了防止消息“死在 MQ 的内存里”。RabbitMQ 默认会将消息暂存在内存中以换取极高的吞吐量，但如果遇到服务器断电、进程崩溃或重启，内存里的数据就会瞬间清空。</p>
+<p>为了防止这种情况，我们必须将数据写入磁盘。在 Spring Boot 体系中，实现完全的持久化需要同时达成“铁三角”：交换机持久化、队列持久化、消息持久化。缺一不可。</p>
+<p>在 Spring Boot 体系下，官方在设计 API 时采取了“安全第一”<strong>的防丢理念。因此，*<em>默认情况下*</em>，使用代码生成的交换机和队列都是持久化的</strong></p>
+<h3 id="sec-2">1. 交换机持久化</h3>
+<p>交换机不负责存储消息，只负责路由。如果不持久化，MQ 重启后交换机会消失，生产者发送的消息将找不到目的地。</p>
+<p>在 Spring Boot 中通过 <code>@Bean</code> 声明交换机时，只需将 <code>durable</code> 参数设置为 <code>true</code>：</p>
+<pre><code class="language-java">@Configuration
+public class MqConfig {
+
+    @Bean
+    public DirectExchange myExchange() {
+        // 参数1: 交换机名称
+        // 参数2: durable (是否持久化) -&gt; 设为 true
+        // 参数3: autoDelete (是否自动删除) -&gt; 设为 false
+        return new DirectExchange(&quot;my_direct_exchange&quot;, true, false);
+    }
+}
+</code></pre>
+<h3 id="sec-3">2. 队列持久化</h3>
+<p>队列是真正用来存放消息的容器。如果不持久化，MQ 重启后队列会被销毁，里面的消息自然也就跟着灰飞烟灭了。</p>
+<p>声明队列时，同样将 <code>durable</code> 设置为 <code>true</code></p>
+<pre><code class="language-java">@Configuration
+public class MqConfig {
+
+    @Bean
+    public Queue myQueue() {
+        // 参数1: 队列名称
+        // 参数2: durable (是否持久化) -&gt; 设为 true
+        return new Queue(&quot;my_queue&quot;, true);
+
+        // 或者使用 Builder 模式 (推荐，语义更清晰)
+        // return QueueBuilder.durable(&quot;my_queue&quot;).build();
+    }
+}
+</code></pre>
+<h3 id="sec-4">3. 消息持久化</h3>
+<p><strong>这是面试中最容易踩坑的地方！</strong> 很多开发者以为把队列持久化了，里面的消息就安全了。其实不然，如果队列持久化了，但消息没有持久化，MQ 重启后，<strong>队列还在，但里面的消息会全空</strong>。</p>
+<p>消息持久化要求我们在发送消息时，将消息的 <code>DeliveryMode</code> 属性设置为 <code>2</code>（持久化）。</p>
+<p><strong>好消息是</strong>：在 Spring Boot 环境下，当你使用 <code>RabbitTemplate</code> 的 <code>convertAndSend</code> 方法发送消息时，Spring 底层已经<strong>默认</strong>帮你把消息体中的 <code>DeliveryMode</code> 设置为持久化模式了。你不需要专门写额外的代码，直接发送即可。</p>
+<h3 id="sec-5">4. 注解</h3>
+<p><strong><code>durable = "true"</code></strong>：在 <code>@Queue</code> 和 <code>@Exchange</code> 注解中，默认其实就是 <code>true</code>，但显式写出来会让代码的语义（持久化防丢失）更加明确</p>
+<pre><code class="language-java">@Slf4j
+@Component
+public class MyMessageConsumer {
+
+    /**
+     * @QueueBinding: 核心绑定注解，用于将队列和交换机绑定在一起
+     *      value: 配置队列 (Queue)
+     *      exchange: 配置交换机 (Exchange)
+     *      key: 配置路由键 (RoutingKey)
+     */
+    @RabbitListener(bindings = @QueueBinding(
+            // 1. 声明队列：名称为 my_queue，durable = &quot;true&quot; 表示开启队列持久化
+            value = @Queue(name = &quot;my_queue&quot;, durable = &quot;true&quot;),
+
+            // 2. 声明交换机：名称为 my_direct_exchange，类型为 direct，开启持久化
+            exchange = @Exchange(name = &quot;my_direct_exchange&quot;, type = &quot;direct&quot;, durable = &quot;true&quot;),
+
+            // 3. 声明路由键：绑定这两者的桥梁
+            key = &quot;my.routing.key&quot;
+    ))
+    public void processMessage(String message) {
+        log.info(&quot;成功接收到 MQ 消息: {}&quot;, message);
+
+        // TODO: 在这里编写你的业务逻辑，比如扣减库存、更新订单状态等
+    }
+}
+</code></pre>
+<p><strong>架构设计的 Trade-off（权衡与避坑）</strong></p>
+<p>在实际的企业级项目落地和日常实习的面试中，面试官往往会追问持久化带来的<strong>副作用</strong>：</p>
+<ol>
+<li>
+<p><strong>性能极速下降</strong>：写磁盘（I/O 操作）的速度远远慢于写内存。全面开启持久化后，RabbitMQ 的单机吞吐量可能会从每秒几万条骤降到几千条。</p>
+</li>
+<li>
+<p><strong>木桶效应</strong>：<strong>队列持久化 + 消息持久化，两者必须同时存在</strong>，消息才能真正存活。</p>
+</li>
+<li>
+<p><strong>并非 100% 绝对安全</strong>：</p>
+</li>
+</ol>
+<p>哪怕你开启了全套持久化，依然存在一个极其微小的“真空期”：当 MQ 刚收到消息，还没来得及把数据刷入磁盘（fsync 操作），服务器正好断电了。此时消息依然会丢失。</p>
+<p><em>解决办法</em>：对于核心金融数据，一般会结合 <strong>Confirm 机制 + 仲裁队列（Quorum Queues）</strong>，确保消息不仅落盘，还要在多个节点上复制成功后，才给生产者返回 <code>ack=true</code>。</p>
+<h2 id="sec-6">2. LazyQueue</h2>
+<p>在默认情况下，RabbitMQ会将接收到的信息保存在内存中以降低消息收发的延迟。但在某些特殊情况下，这会导致消息积压，比如：</p>
+<ul>
+<li>消费者宕机或出现网络故障</li>
+<li>消息发送量激增，超过了消费者处理速度</li>
+<li>消费者处理业务发生阻塞</li>
+</ul>
+<p>一旦出现消息堆积问题，RabbitMQ的内存占用就会越来越高，直到触发内存预警上限。此时RabbitMQ会将内存消息刷到磁盘上，这个行为成为<code>PageOut</code>. <code>PageOut</code>会耗费一段时间，并且会阻塞队列进程。因此在这个过程中RabbitMQ不会再处理新的消息，生产者的所有请求都会被阻塞。</p>
+<p>为了解决这个问题，从RabbitMQ的3.6.0版本开始，就增加了Lazy Queues的模式，也就是惰性队列。惰性队列的特征如下：</p>
+<ul>
+<li><strong>接收到消息后直接存入磁盘而非内存（内存中只保留最近的消息，默认2048条）</strong></li>
+<li><strong>消费者要消费消息时才会从磁盘中读取并加载到内存（也就是懒加载）</strong></li>
+<li><strong>支持数百万条的消息存储</strong></li>
+</ul>
+<p>Lazy Queue 用<strong>极其稳定的海量堆积能力</strong>（可以轻松堆积数千万条消息而不崩溃）和<strong>超低的内存占用</strong>，换取了一点点<strong>延迟时间的增加</strong>（因为每次消费都要读盘）</p>
+<p>而在3.12版本之后，LazyQueue已经成为所有队列的默认格式。因此官方推荐升级MQ为3.12版本或者所有队列都设置为LazyQueue模式。</p>
+<p><strong>1. 控制台配置Lazy模式</strong></p>
+<p>在添加队列的时候，添加<code>x-queue-mod=lazy</code>参数即可设置队列为Lazy模式：<br />
+<img alt="image-20260807202050974" src="images/image-20260807202050974.png" /></p>
+<p><strong>2. 代码配置Lazy模式</strong></p>
+<p>在利用SpringAMQP声明队列的时候，添加<code>x-queue-mod=lazy</code>参数也可设置队列为Lazy模式：</p>
+<pre><code class="language-java">@Bean
+public Queue lazyQueue(){
+    return QueueBuilder
+            .durable(&quot;lazy.queue&quot;)
+            .lazy() // 开启Lazy模式
+            .build();
+}
+</code></pre>
+<p>这里是通过<code>QueueBuilder</code>的<code>lazy()</code>函数配置Lazy模式，底层源码如下：<br />
+<img alt="image-20260807202630467" src="images/image-20260807202630467.png" /></p>
+<p>当然，我们也可以基于注解来声明队列并设置为Lazy模式：</p>
+<pre><code class="language-java">@RabbitListener(queuesToDeclare = @Queue(
+        name = &quot;lazy.queue&quot;,
+        durable = &quot;true&quot;,
+        arguments = @Argument(name = &quot;x-queue-mode&quot;, value = &quot;lazy&quot;)
+))
+public void listenLazyQueue(String msg){
+    log.info(&quot;接收到 lazy.queue的消息：{}&quot;, msg);
+}
+</code></pre>
+<h2 id="sec-7">3. Quorum</h2>
+<p>在 Spring Boot / Spring AMQP 中，使用 Quorum 队列与 Lazy 队列主要是通过设置队列参数 <code>x-queue-type</code> 和 <code>x-queue-mode</code> 来完成的，可以通过 <strong>Java Config (<code>@Bean</code>)</strong> 或 <strong>注解 (<code>@RabbitListener</code>)</strong> 方式声明。</p>
+<p><strong>1. 使用 Java Config 显式声明</strong></p>
+<p>使用 <code>QueueBuilder</code> 可以最直观地链式调用内置方法配置：</p>
+<pre><code class="language-java">@Configuration
+public class RabbitQueueConfig {
+    // 1. 声明 Quorum 队列（推荐用于核心高可用业务）
+    @Bean
+    public Queue quorumQueue() {
+        return QueueBuilder.durable(&quot;order.quorum.queue&quot;)
+                .quorum() // 相当于添加参数 &quot;x-queue-type&quot;: &quot;quorum&quot;
+                // .withArgument(&quot;x-delivery-limit&quot;, 5) // 可选：设置死信重试最大投递次数
+                .build();
+    }
+}
+</code></pre>
+<p><strong>2. 使用注解声明</strong></p>
+<p>如果在消费者端直接使用 <code>@RabbitListener</code> 动态建队列，需通过 <code>@Argument</code> 设置属性：</p>
+<pre><code class="language-java">@Component
+public class MessageConsumer {
+    // 声明并监听 Quorum 队列
+    @RabbitListener(bindings = @QueueBinding(
+        value = @Queue(
+            value = &quot;order.quorum.queue&quot;,
+            durable = &quot;true&quot;,
+            arguments = @Argument(name = &quot;x-queue-type&quot;, value = &quot;quorum&quot;)
+        ),
+        exchange = @Exchange(value = &quot;order.exchange&quot;, type = ExchangeTypes.TOPIC),
+        key = &quot;order.#&quot;
+    ))
+    public void handleQuorumMessage(String message) {
+        // 业务逻辑处理
+    }
+}
+</code></pre>
+<h2 id="sec-8">4. 对比</h2>
+<p>Quorum 队列与 Lazy 队列是 RabbitMQ 中解决不同架构痛点的两套机制：<strong>Quorum 队列解决的是“集群高可用与数据强一致”问题，而 Lazy 队列解决的是“海量消息积压与内存保护”问题。</strong></p>
+<p><strong>Quorum 队列（高可用与数据安全）</strong></p>
+<ul>
+<li><strong>定位</strong>：RabbitMQ 3.8 引入的<strong>队列类型</strong>（<code>x-queue-type: quorum</code>），用于全面替代已废弃的镜像队列（Mirrored Queue）。</li>
+<li><strong>机制</strong>：基于 <strong>Raft 共识算法</strong>，采用“一主多从”的分布式副本架构。消息必须被集群中过半数（Quorum）节点写入磁盘后，才算投递成功。</li>
+<li><strong>核心价值</strong>：单点宕机自动选举新 Leader，保证高可用性与数据零丢失。</li>
+</ul>
+<p><strong>Lazy 队列（惰性队列 - 内存保护）</strong></p>
+<ul>
+<li><strong>定位</strong>：RabbitMQ 3.6 引入的<strong>队列运行模式</strong>（<code>x-queue-mode: lazy</code>），主要作用于经典队列（Classic Queue）。</li>
+<li><strong>机制</strong>：消息到达后<strong>直接写入磁盘</strong>，尽可能不在内存（RAM）中常驻缓存；只有当消费者需要拉取消息时，才按需加载到内存中。</li>
+<li><strong>核心价值</strong>：防止百万级消息暴涨积压时耗尽服务器 RAM 导致 Broker 崩溃。</li>
+</ul>
+<p><strong>Quorum 队列 vs Lazy 队列核心对比</strong></p>
+<table>
+<thead>
+<tr>
+<th><strong>维度</strong></th>
+<th><strong>Quorum 队列 (Quorum Queue)</strong></th>
+<th><strong>Lazy 队列 (Lazy Queue)</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>属性分类</strong></td>
+<td>独立的 <strong>队列类型</strong> (<code>x-queue-type</code>)</td>
+<td>队列的 <strong>运行模式</strong> (<code>x-queue-mode</code>)</td>
+</tr>
+<tr>
+<td><strong>核心目的</strong></td>
+<td>保证高可用、容灾与数据强一致性</td>
+<td>降低内存占用，承受海量消息积压</td>
+</tr>
+<tr>
+<td><strong>底层原理</strong></td>
+<td>Raft 共识协议 + 多数派节点磁盘持久化</td>
+<td>Disk-first（磁盘优先存储），按需读入内存</td>
+</tr>
+<tr>
+<td><strong>高可用能力</strong></td>
+<td><strong>原生支持</strong>，自动故障转移与副本同步</td>
+<td><strong>无原生分布式副本</strong>（依赖单节点或经典模式）</td>
+</tr>
+<tr>
+<td><strong>性能侧重</strong></td>
+<td>强调网络与集群吞吐，防止网络分区丢数据</td>
+<td>依赖磁盘 I/O 吞吐，牺牲部分读写延迟换取内存安全</td>
+</tr>
+<tr>
+<td><strong>典型场景</strong></td>
+<td>订单、支付、交易等<strong>不能丢消息</strong>的核心业务</td>
+<td>离线批处理、消费者宕机、流量峰值极高的<strong>削峰填谷</strong></td>
+</tr>
+</tbody>
+</table>
+<p>在现代 RabbitMQ 版本（3.12+）中，Quorum 队列在内部实现上也融合了类似 Lazy 的页丢弃机制（自动将非热点消息从内存预读释放到磁盘），因此生产环境推荐将 <strong>Quorum 队列</strong> 作为高可靠业务的默认首选。</p>
+<p>Quorum和lazy<strong>不能一起使用，也没有必要。</strong> <code>x-queue-mode: lazy</code> 是<strong>经典队列（Classic Queue）专有的配置参数，而 Quorum 队列底层天然就具备惰性（Lazy）落盘与按需加载机制</strong>。</p>
+  </article>
+  <div class="pn"><a class="note" href="2.html">← 上一篇：2. RabbitMQ 基础</a><a class="note" href="4.html">下一篇：4. 生产者的可靠性 →</a></div>
+</div>
+</div>
+<footer class="page-foot"><span>mq-note / 3.数据持久化.md</span><span>MQ 实验台 · 静态渲染</span></footer>
+<script>
+(function(){
+  var links=[].slice.call(document.querySelectorAll('.toc a[href^="#"]'));
+  if(!links.length)return;
+  var map={};links.forEach(function(a){map[a.getAttribute("href").slice(1)]=a;});
+  var heads=[].slice.call(document.querySelectorAll('.md-body h2[id],.md-body h3[id]'));
+  var tops=[];
+  function measure(){tops=heads.map(function(h){return h.getBoundingClientRect().top+window.scrollY;});}
+  function update(){
+    var y=window.scrollY+120,cur=null;
+    for(var i=0;i<heads.length;i++){if(tops[i]<=y)cur=heads[i].id;}
+    links.forEach(function(a){a.classList.remove("cur");});
+    if(cur&&map[cur])map[cur].classList.add("cur");
+  }
+  addEventListener("scroll",update,{passive:true});
+  addEventListener("resize",function(){measure();update();});
+  measure();update();
+})();
+</script>
+</body>
+</html>

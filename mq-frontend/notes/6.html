@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>延迟消息 · MQ 实验台</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" media="print" onload="this.media='all'"
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true"></span>
+    <div>
+      <h1>MQ 实验台</h1>
+    </div>
+  </div>
+  <nav class="nav" aria-label="主导航"><a href="../index.html">总览</a><a href="../trade.html">业务链路</a><a href="../reliability.html">消息可靠性</a><a href="../consume.html">消费结果</a><a href="../notes.html" class="on">学习笔记</a></nav>
+  <div class="topbar-side">
+    <a class="mgmt" href="http://192.168.146.130:15672" target="_blank" rel="noopener">管理台</a>
+  </div>
+</header>
+<div class="note-layout">
+<aside class="toc" aria-label="目录"><div class="toc-title">目录</div><a class="lv2" href="#sec-1">1. 死信交换机</a><a class="lv2" href="#sec-2">2. DelayExchange插件</a><a class="lv3" href="#sec-3">1. 部署</a><a class="lv3" href="#sec-4">2. 声明延迟交换机</a><a class="lv3" href="#sec-5">3. 发送延迟消息</a></aside>
+<div class="md-wrap">
+  <div class="md-head">
+    <h2>《6. 延迟消息》</h2>
+    <p class="fine">死信交换机 · 延迟插件</p>
+  </div>
+  <article class="md-body">
+<h1>延迟消息</h1>
+<p><strong>延迟消息：生产者发送消息时指定一个时间，消费者不会立刻收到消息，而是在指定消息之后才收到消息</strong></p>
+<p><strong>延迟任务：设置在一定时间之后才执行的任务</strong></p>
+<p>在电商的支付业务中，对于一些库存有限的商品，为了更好的用户体验，通常都会在用户下单时立刻扣减商品库存。例如电影院购票、高铁购票，下单后就会锁定座位资源，其他人无法重复购买。</p>
+<p>但是这样就存在一个问题，假如用户下单后一直不付款，就会一直占有库存资源，导致其他客户无法正常交易，最终导致商户利益受损！</p>
+<p>因此，电商中通常的做法就是：<strong>对于超过一定时间未支付的订单，应该立刻取消订单并释放占用的库存</strong>。</p>
+<p>例如，订单支付超时时间为30分钟，则我们应该在用户下单后的第30分钟检查订单支付状态，如果发现未支付，应该立刻取消订单，释放库存。</p>
+<p>但问题来了：如何才能准确的实现在下单后第30分钟去检查支付状态呢？</p>
+<p>像这种在一段时间以后才执行的任务，我们称之为<strong>延迟任务</strong>，而要实现延迟任务，最简单的方案就是利用MQ的延迟消息了。</p>
+<p>在RabbitMQ中实现延迟消息也有两种方案：</p>
+<ul>
+<li>死信交换机+TTL</li>
+<li>延迟消息插件</li>
+</ul>
+<h2 id="sec-1">1. 死信交换机</h2>
+<p>什么是死信？</p>
+<p>当一个队列中的消息满足下列情况之一时，可以成为死信（dead letter）：</p>
+<ul>
+<li>消费者使用<code>basic.reject</code>或 <code>basic.nack</code>声明消费失败，并且消息的<code>requeue</code>参数设置为false</li>
+<li>消息是一个过期消息，超时无人消费</li>
+<li>要投递的队列消息满了，无法投递</li>
+</ul>
+<p>如果一个队列中的消息已经成为死信，并且这个队列通过<code>dead-letter-exchange</code>属性指定了一个交换机，那么队列中的死信就会投递到这个交换机中，而这个交换机就称为<strong>死信交换机</strong>（Dead Letter Exchange）。而此时加入有队列与死信交换机绑定，则最终死信就会被投递到这个队列中。</p>
+<p>死信交换机有什么作用呢？</p>
+<ol>
+<li>收集那些因处理失败而被拒绝的消息</li>
+<li>收集那些因队列满了而被拒绝的消息</li>
+<li>收集因TTL（有效期）到期的消息</li>
+</ol>
+<p>前面两种作用场景可以看做是把死信交换机当做一种消息处理的最终兜底方案，与消费者重试时讲的<code>RepublishMessageRecoverer</code>作用类似。</p>
+<p>而最后一种场景，大家设想一下这样的场景：</p>
+<p><img alt="image-20260808171819201" src="images/image-20260808171819201.png" /><br />
+<strong>注意：</strong><br />
+RabbitMQ的消息过期是基于追溯方式来实现的，也就是说当一个消息的TTL到期以后不一定会被移除或投递到死信交换机，而是在消息恰好处于队首时才会被处理。<br />
+当队列中消息堆积很多的时候，过期消息可能不会被按时处理，因此你设置的TTL时间不一定准确。</p>
+<h2 id="sec-2">2. DelayExchange插件</h2>
+<p>正常情况下，RabbitMQ 的交换机（Exchange）是不存储消息的，它只负责路由。 但安装了该插件后，会新增一种交换机类型：<code>x-delayed-message</code>。</p>
+<ol>
+<li><strong>暂存消息：</strong> 当生产者发送带有延迟时间标记的消息到该交换机时，交换机<strong>不会立即路由</strong>，而是将消息暂存在 RabbitMQ 的内部数据库（Mnesia）中。</li>
+<li><strong>到期路由：</strong> 交换机会在内部启动定时器，当消息的延迟时间到达后，交换机才会根据 Routing Key 将消息投递到绑定的目标队列中。</li>
+<li><strong>消费：</strong> 消费者在目标队列中监听并正常消费消息。</li>
+</ol>
+<h3 id="sec-3">1. 部署</h3>
+<p><strong>第一阶段：准备插件文件</strong></p>
+<ol>
+<li>根据你的 RabbitMQ 版本（如 <code>3.12</code>），去官方 GitHub 发布页下载对应的 <code>.ez</code> 格式插件包（例如：<code>rabbitmq_delayed_message_exchange-3.12.0.ez</code>）。插件下载地址：<a href="https://github.com/rabbitmq/rabbitmq-delayed-message-exchange">GitHub - rabbitmq/rabbitmq-delayed-message-exchange: Delayed Messaging for RabbitMQ</a></li>
+<li>先将文件下载到你的物理机（Windows）电脑上。</li>
+</ol>
+<p><strong>第二阶段：Windows -&gt; Linux 虚拟机</strong></p>
+<ol>
+<li>打开你常用的 SSH 客户端工具（如 FinalShell、Xftp、MobaXterm 等），连接到你的 Linux 虚拟机。</li>
+<li>将 Windows 上的 <code>.ez</code> 文件拖拽或上传到虚拟机内部的某个目录下（例如上传到 <code>/root</code> 目录）。</li>
+</ol>
+<p><strong>第三阶段：Linux 虚拟机 -&gt; Docker 容器</strong></p>
+<ol>
+<li>
+<p>在虚拟机的 SSH 终端里，使用 <code>cd</code> 命令切换到你刚才存放文件的目录。</p>
+</li>
+<li>
+<p>执行 <code>docker cp</code> 命令，将宿主机上的文件强行拷贝到 RabbitMQ 容器的官方插件目录中：</p>
+</li>
+</ol>
+<p><code>bash
+   docker cp rabbitmq_delayed_message_exchange-3.12.0.ez rabbitmq:/plugins</code></p>
+<p><em>(注：命令中的 <code>rabbitmq</code> 是你的容器名称，<code>/plugins</code> 是容器内的目标路径)</em></p>
+<p><strong>第四阶段：激活与重启</strong></p>
+<ol>
+<li>在虚拟机终端里，通过 <code>docker exec</code> 进入容器内部执行开启插件的命令：</li>
+</ol>
+<p><code>bash
+   docker exec -it rabbitmq rabbitmq-plugins enable rabbitmq_delayed_message_exchange</code></p>
+<ol start="2">
+<li>重启该容器，让配置彻底加载并生效：</li>
+</ol>
+<p><code>bash
+   docker restart rabbitmq</code></p>
+<p><em>(注：只要执行过一次 enable，配置就会自启动，后续重启虚拟机或容器都不需要再重新配置)</em></p>
+<p><strong>第五阶段：最终验证</strong></p>
+<ol>
+<li>在 Windows 浏览器中打开 RabbitMQ 管理后台（<a href="http://192.168.146.130:15672">http://192.168.146.130:15672</a>）。</li>
+<li>点击 <strong>Exchanges</strong> 标签页，展开底部的 <strong>Add a new exchange</strong> 面板。</li>
+<li>点击 <strong>Type</strong> 旁边的下拉菜单，如果列表里出现了 <strong><code>x-delayed-message</code></strong> 选项，即代表部署圆满成功。</li>
+</ol>
+<h3 id="sec-4">2. 声明延迟交换机</h3>
+<p>基于注解方式：</p>
+<pre><code class="language-java">@RabbitListener(bindings = @QueueBinding(
+        value = @Queue(name = &quot;delay.queue&quot;, durable = &quot;true&quot;),
+        exchange = @Exchange(name = &quot;delay.direct&quot;, delayed = &quot;true&quot;),
+        key = &quot;delay&quot;
+))
+public void listenDelayMessage(String msg){
+    log.info(&quot;接收到delay.queue的延迟消息：{}&quot;, msg);
+}
+</code></pre>
+<p>基于<code>@Bean</code>的方式：</p>
+<pre><code class="language-java">@Slf4j
+@Configuration
+public class DelayExchangeConfig {
+
+    @Bean
+    public DirectExchange delayExchange(){
+        return ExchangeBuilder
+                .directExchange(&quot;delay.direct&quot;) // 指定交换机类型和名称
+                .delayed() // 设置delay的属性为true
+                .durable(true) // 持久化
+                .build();
+    }
+
+    @Bean
+    public Queue delayedQueue(){
+        return new Queue(&quot;delay.queue&quot;);
+    }
+
+    @Bean
+    public Binding delayQueueBinding(){
+        return BindingBuilder.bind(delayedQueue()).to(delayExchange()).with(&quot;delay&quot;).noargs();
+    }
+}
+
+</code></pre>
+<h3 id="sec-5">3. 发送延迟消息</h3>
+<p>发送消息时，必须通过x-delay属性设定延迟时间：</p>
+<pre><code class="language-java">@Test
+void testPublisherDelayMessage() {
+    // 1.创建消息
+    String message = &quot;hello, delayed message&quot;;
+    // 2.发送消息，利用消息后置处理器添加消息头
+    rabbitTemplate.convertAndSend(&quot;delay.direct&quot;, &quot;delay&quot;, message, msg -&gt; {
+    // 依然使用 Spring 提供的便捷方法
+    msg.getMessageProperties().setHeader(&quot;x-delay&quot;, delayMillis);
+    return msg;
+});
+}
+</code></pre>
+  </article>
+  <div class="pn"><a class="note" href="5.html">← 上一篇：5. 消费者的可靠性</a><span></span></div>
+</div>
+</div>
+<footer class="page-foot"><span>mq-note / 6.延迟消息.md</span><span>MQ 实验台 · 静态渲染</span></footer>
+<script>
+(function(){
+  var links=[].slice.call(document.querySelectorAll('.toc a[href^="#"]'));
+  if(!links.length)return;
+  var map={};links.forEach(function(a){map[a.getAttribute("href").slice(1)]=a;});
+  var heads=[].slice.call(document.querySelectorAll('.md-body h2[id],.md-body h3[id]'));
+  var tops=[];
+  function measure(){tops=heads.map(function(h){return h.getBoundingClientRect().top+window.scrollY;});}
+  function update(){
+    var y=window.scrollY+120,cur=null;
+    for(var i=0;i<heads.length;i++){if(tops[i]<=y)cur=heads[i].id;}
+    links.forEach(function(a){a.classList.remove("cur");});
+    if(cur&&map[cur])map[cur].classList.add("cur");
+  }
+  addEventListener("scroll",update,{passive:true});
+  addEventListener("resize",function(){measure();update();});
+  measure();update();
+})();
+</script>
+</body>
+</html>

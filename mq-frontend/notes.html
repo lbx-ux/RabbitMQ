@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>学习笔记 · MQ 实验台</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" media="print" onload="this.media='all'"
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true"></span>
+    <div>
+      <h1>MQ 实验台</h1>
+    </div>
+  </div>
+  <nav class="nav" aria-label="主导航"><a href="index.html">总览</a><a href="trade.html">业务链路</a><a href="reliability.html">消息可靠性</a><a href="consume.html">消费结果</a><a href="notes.html" class="on">学习笔记</a></nav>
+  <div class="topbar-side">
+    <a class="mgmt" href="http://192.168.146.130:15672" target="_blank" rel="noopener">管理台</a>
+  </div>
+</header>
+<div class="sec"><h2>配套笔记</h2><span class="fine">mq-note 目录 6 篇 · 与代码注释互相引用</span></div>
+<div class="guides" style="grid-template-columns:repeat(3,1fr)">
+  <a class="guide" href="notes/1.html"><h3>1. RabbitMQ</h3><span class="step"><i>▸</i><span>部署 · 收发消息 · 数据隔离</span></span></a>
+  <a class="guide" href="notes/2.html"><h3>2. RabbitMQ 基础</h3><span class="step"><i>▸</i><span>三大核心 · 交换机 · 消息转换器</span></span></a>
+  <a class="guide" href="notes/3.html"><h3>3. 数据持久化</h3><span class="step"><i>▸</i><span>持久化 · LazyQueue · Quorum</span></span></a>
+  <a class="guide" href="notes/4.html"><h3>4. 生产者的可靠性</h3><span class="step"><i>▸</i><span>重试 · Confirm/Return · 本地消息表</span></span></a>
+  <a class="guide" href="notes/5.html"><h3>5. 消费者的可靠性</h3><span class="step"><i>▸</i><span>确认 · 重试 · 死信兜底 · 幂等</span></span></a>
+  <a class="guide" href="notes/6.html"><h3>6. 延迟消息</h3><span class="step"><i>▸</i><span>死信交换机 · 延迟插件</span></span></a>
+</div>
+<footer class="page-foot"><span>mq-note / 6 篇学习笔记</span><span>MQ 实验台 · 静态渲染</span></footer>
+</body>
+</html>

@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RabbitMQ · MQ 实验台</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" media="print" onload="this.media='all'"
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true"></span>
+    <div>
+      <h1>MQ 实验台</h1>
+    </div>
+  </div>
+  <nav class="nav" aria-label="主导航"><a href="../index.html">总览</a><a href="../trade.html">业务链路</a><a href="../reliability.html">消息可靠性</a><a href="../consume.html">消费结果</a><a href="../notes.html" class="on">学习笔记</a></nav>
+  <div class="topbar-side">
+    <a class="mgmt" href="http://192.168.146.130:15672" target="_blank" rel="noopener">管理台</a>
+  </div>
+</header>
+<div class="note-layout">
+<aside class="toc" aria-label="目录"><div class="toc-title">目录</div><a class="lv2" href="#sec-1">1. 部署</a><a class="lv2" href="#sec-2">2. 收发消息</a><a class="lv3" href="#sec-3">1. 交换机</a><a class="lv3" href="#sec-4">2. 队列</a><a class="lv3" href="#sec-5">3. 绑定关系</a><a class="lv3" href="#sec-6">4. 发送消息</a><a class="lv2" href="#sec-7">3. 数据隔离</a><a class="lv3" href="#sec-8">1. 用户管理</a><a class="lv3" href="#sec-9">2. virtual host</a></aside>
+<div class="md-wrap">
+  <div class="md-head">
+    <h2>《1. RabbitMQ》</h2>
+    <p class="fine">部署 · 收发消息 · 数据隔离</p>
+  </div>
+  <article class="md-body">
+<h1>RabbitMQ</h1>
+<p>RabbitMQ 是基于 AMQP（高级消息队列协议）的开源消息中间件，主要用于分布式系统中的应用解耦、异步处理、流量削峰以及复杂消息路由。</p>
+<p><strong>核心架构与基本概念</strong>：</p>
+<p>RabbitMQ 的核心设计建立在生产者、交换机、队列和消费者之间的解耦关系上：</p>
+<p><img src="images/image-20260806210240912.png" alt="image-20260806210240912" style="zoom:67%;" /></p>
+<ul>
+<li><strong>Producer（生产者）</strong>：发布消息的应用端。</li>
+<li><strong>Exchange（交换机）</strong>：接收生产者发送的消息，并根据路由规则将消息投递到绑定的队列中。</li>
+<li><strong>Queue（消息队列）</strong>：消息的存储容器，遵循 FIFO（先进先出）原则，保存消息直到被消费者接收。</li>
+<li><strong>Binding（绑定规则）</strong>：建立 Exchange 与 Queue 之间的关联，通常带有 Binding Key。</li>
+<li><strong>Routing Key（路由键）</strong>：生产者发送消息时附带的路由标识。</li>
+<li><strong>Consumer（消费者）</strong>：订阅队列并处理消息的应用端。</li>
+<li><strong>virtual host（虚拟主机）</strong>：起到数据隔离的作用。每个虚拟主机相互独立，有各自的exchange、queue</li>
+</ul>
+<h2 id="sec-1">1. 部署</h2>
+<p>基于Docker来安装RabbitMQ</p>
+<pre><code class="language-shell">docker run -d \
+ --name rabbitmq \
+ --hostname mq \
+ --restart=always \
+ -p 15672:15672 \
+ -p 5672:5672 \
+ -e RABBITMQ_DEFAULT_USER=admin \
+ -e RABBITMQ_DEFAULT_PASS=admin \
+ -v mq-data-312:/var/lib/rabbitmq \
+ -v mq-plugins-312:/plugins \
+ rabbitmq:3.12-management
+</code></pre>
+<ul>
+<li>15672：RabbitMQ提供的管理控制台的端口</li>
+<li>5672：RabbitMQ的消息发送处理接口</li>
+</ul>
+<p>访问 http://192.168.146.130:15672即可看到管理控制台。首次访问需要登录，默认的用户名和密码在配置文件中已经指定了。</p>
+<h2 id="sec-2">2. 收发消息</h2>
+<table>
+<thead>
+<tr>
+<th><strong>组件</strong></th>
+<th><strong>推荐格式</strong></th>
+<th><strong>示例</strong></th>
+<th><strong>解释</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>交换机 (Exchange)</strong></td>
+<td><code>项目名.业务模块.类型.exchange</code></td>
+<td><code>mall.order.direct.exchange</code></td>
+<td>明确指出属于哪个项目、哪个模块以及交换机类型。</td>
+</tr>
+<tr>
+<td><strong>队列 (Queue)</strong></td>
+<td><code>项目名.业务模块.具体操作.queue</code></td>
+<td><code>mall.order.cancel.queue</code></td>
+<td>明确指出这个队列里的消息是用来做什么的。</td>
+</tr>
+<tr>
+<td><strong>路由键 (Routing Key)</strong></td>
+<td><code>业务模块.动作.状态</code></td>
+<td><code>order.payment.success</code></td>
+<td>使用 <code>.</code> 分隔，名词+动词/状态，方便与 Topic 交换机的通配符（<code>*</code> 或 <code>#</code>）结合使用。</td>
+</tr>
+</tbody>
+</table>
+<h3 id="sec-3">1. 交换机</h3>
+<p>我们打开Exchanges选项卡，可以看到已经存在很多交换机：<br />
+<img alt="image-20260806212838457" src="images/image-20260806212838457.png" /><br />
+我们点击任意交换机，即可进入交换机详情页面。利用控制台中的publish message 发送一条消息：</p>
+<p><img alt="image-20260806212926576" src="images/image-20260806212926576.png" /><br />
+这里是由控制台模拟了生产者发送的消息。由于没有消费者存在，最终消息丢失了，这样说明交换机没有存储消息的能力。</p>
+<h3 id="sec-4">2. 队列</h3>
+<p>我们打开<code>Queues</code>选项卡，新建一个队列：<br />
+命名为<code>hello.queue1</code>：<br />
+<img alt="image-20260806213044288" src="images/image-20260806213044288.png" /><br />
+再以相同的方式，创建一个队列，名字为<code>hello.queue2</code>，最终队列列表如下：<br />
+<img alt="image-20260806213207103" src="images/image-20260806213207103.png" /><br />
+此时，我们再次向<code>amq.fanout</code>交换机发送一条消息。会发现消息依然没有到达队列！！<br />
+怎么回事呢？<br />
+发送到交换机的消息，只会路由到与其绑定的队列，因此仅仅创建队列是不够的，我们还需要将其与交换机绑定。</p>
+<h3 id="sec-5">3. 绑定关系</h3>
+<p>点击<code>Exchanges</code>选项卡，点击<code>amq.fanout</code>交换机，进入交换机详情页，然后点击<code>Bindings</code>菜单，在表单中填写要绑定的队列名称：<br />
+<img alt="image-20260806213220752" src="images/image-20260806213220752.png" /><br />
+相同的方式，将hello.queue2也绑定到改交换机。<br />
+最终，绑定结果如下：<br />
+<img alt="image-20260806213323264" src="images/image-20260806213323264.png" /></p>
+<h3 id="sec-6">4. 发送消息</h3>
+<p>再次回到exchange页面，找到刚刚绑定的<code>amq.fanout</code>，点击进入详情页，再次发送一条消息：<br />
+<img alt="image-20260806213410213" src="images/image-20260806213410213.png" /><br />
+回到<code>Queues</code>页面，可以发现<code>hello.queue</code>中已经有一条消息了：<br />
+<img alt="image-20260806213432137" src="images/image-20260806213432137.png" /><br />
+点击队列名称，进入详情页，查看队列详情，这次我们点击get message：<br />
+<img alt="image-20260806213445230" src="images/image-20260806213445230.png" /><br />
+可以看到消息到达队列了：<br />
+<img alt="image-20260806213534646" src="images/image-20260806213534646.png" /><br />
+这个时候如果有消费者监听了MQ的<code>hello.queue1</code>或<code>hello.queue2</code>队列，自然就能接收到消息了。</p>
+<h2 id="sec-7">3. 数据隔离</h2>
+<h3 id="sec-8">1. 用户管理</h3>
+<p>点击<code>Admin</code>选项卡，首先会看到RabbitMQ控制台的用户管理界面：<br />
+<img alt="image-20260806214238441" src="images/image-20260806214238441.png" /><br />
+这里的用户都是RabbitMQ的管理或运维人员。目前只有安装RabbitMQ时添加的<code>itheima</code>这个用户。仔细观察用户表格中的字段，如下：</p>
+<ul>
+<li><code>Name</code>：<code>itheima</code>，也就是用户名</li>
+<li><code>Tags</code>：<code>administrator</code>，说明<code>itheima</code>用户是超级管理员，拥有所有权限</li>
+<li><code>Can access virtual host</code>： <code>/</code>，可以访问的<code>virtual host</code>，这里的<code>/</code>是默认的<code>virtual host</code></li>
+</ul>
+<p>对于小型企业而言，出于成本考虑，我们通常只会搭建一套MQ集群，公司内的多个不同项目同时使用。这个时候为了避免互相干扰， 我们会利用<code>virtual host</code>的隔离特性，将不同项目隔离。一般会做两件事情：</p>
+<ul>
+<li>给每个项目创建独立的运维账号，将管理权限分离。</li>
+<li>给每个项目创建不同的<code>virtual host</code>，将每个项目的数据隔离。</li>
+</ul>
+<p>比如，我们给黑马商城创建一个新的用户，命名为<code>hmall</code>：<br />
+<img src="images/image-20260806214408996.png" alt="image-20260806214408996" style="zoom:67%;" /><br />
+你会发现此时hmall用户没有任何<code>virtual host</code>的访问权限：<br />
+<img src="images/image-20260806214416816.png" alt="image-20260806214416816" style="zoom:67%;" /><br />
+别急，接下来我们就来授权。</p>
+<h3 id="sec-9">2. virtual host</h3>
+<p>我们先退出登录：切换到刚刚创建的hmall用户登录，然后点击<code>Virtual Hosts</code>菜单，进入<code>virtual host</code>管理页：<br />
+可以看到目前只有一个默认的<code>virtual host</code>，名字为 <code>/</code>。<br />
+ 我们可以给黑马商城项目创建一个单独的<code>virtual host</code>，而不是使用默认的<code>/</code>。<br />
+<img src="images/image-20260806215146725.png" alt="image-20260806215146725" style="zoom:67%;" /><br />
+创建完成后如图：<br />
+<img alt="image-20260806215424545" src="images/image-20260806215424545.png" /><br />
+由于我们是登录<code>hmall</code>账户后创建的<code>virtual host</code>，因此回到<code>users</code>菜单，你会发现当前用户已经具备了对<code>/hmall</code>这个<code>virtual host</code>的访问权限了：</p>
+<p>此时，点击页面右上角virtual host下拉菜单，切换<code>virtual host</code>为 <code>/hmall</code>：</p>
+<p>然后再次查看queues选项卡，会发现之前的队列已经看不到了，这就是基于<code>virtual host</code>的隔离效果。</p>
+  </article>
+  <div class="pn"><span></span><a class="note" href="2.html">下一篇：2. RabbitMQ 基础 →</a></div>
+</div>
+</div>
+<footer class="page-foot"><span>mq-note / 1.RabbitMQ.md</span><span>MQ 实验台 · 静态渲染</span></footer>
+<script>
+(function(){
+  var links=[].slice.call(document.querySelectorAll('.toc a[href^="#"]'));
+  if(!links.length)return;
+  var map={};links.forEach(function(a){map[a.getAttribute("href").slice(1)]=a;});
+  var heads=[].slice.call(document.querySelectorAll('.md-body h2[id],.md-body h3[id]'));
+  var tops=[];
+  function measure(){tops=heads.map(function(h){return h.getBoundingClientRect().top+window.scrollY;});}
+  function update(){
+    var y=window.scrollY+120,cur=null;
+    for(var i=0;i<heads.length;i++){if(tops[i]<=y)cur=heads[i].id;}
+    links.forEach(function(a){a.classList.remove("cur");});
+    if(cur&&map[cur])map[cur].classList.add("cur");
+  }
+  addEventListener("scroll",update,{passive:true});
+  addEventListener("resize",function(){measure();update();});
+  measure();update();
+})();
+</script>
+</body>
+</html>

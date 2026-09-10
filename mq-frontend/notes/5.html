@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>消费者的可靠性 · MQ 实验台</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" media="print" onload="this.media='all'"
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true"></span>
+    <div>
+      <h1>MQ 实验台</h1>
+    </div>
+  </div>
+  <nav class="nav" aria-label="主导航"><a href="../index.html">总览</a><a href="../trade.html">业务链路</a><a href="../reliability.html">消息可靠性</a><a href="../consume.html">消费结果</a><a href="../notes.html" class="on">学习笔记</a></nav>
+  <div class="topbar-side">
+    <a class="mgmt" href="http://192.168.146.130:15672" target="_blank" rel="noopener">管理台</a>
+  </div>
+</header>
+<div class="note-layout">
+<aside class="toc" aria-label="目录"><div class="toc-title">目录</div><a class="lv2" href="#sec-1">1. 消费者确认机制</a><a class="lv2" href="#sec-2">2. 失败重试机制</a><a class="lv2" href="#sec-3">3. 失败处理策略</a><a class="lv2" href="#sec-4">4. 业务幂等性</a><a class="lv3" href="#sec-5">1. 数据库唯一索引</a><a class="lv3" href="#sec-6">2. Redis 分布式锁</a><a class="lv3" href="#sec-7">3. 状态机 / 乐观锁控制</a></aside>
+<div class="md-wrap">
+  <div class="md-head">
+    <h2>《5. 消费者的可靠性》</h2>
+    <p class="fine">确认 · 重试 · 死信兜底 · 幂等</p>
+  </div>
+  <article class="md-body">
+<h1>消费者的可靠性</h1>
+<p>发送端把消息安全送到了 MQ，消费端的风险从投递那一刻开始：</p>
+<pre><code>MQ ──① none 模式：投递即删，消费者宕机消息就丢──────────────&gt; 丢
+MQ ──② 业务异常被 try-catch 吞掉 → Spring 以为成功 → ACK ──&gt; 丢（重试机制完全失效）
+MQ ──③ 重试耗尽后默认策略 = 直接 reject 丢弃────────────────&gt; 丢
+MQ ──④ 重试耗尽后 ImmediateRequeue 无限重回队列─────────────&gt; 死循环
+MQ ──⑤ 同一条消息被投递 2~N 次（补偿重发/重试重投/宕机重投）→ 重复消费事故
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>风险</th>
+<th>对应手段</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>① 投递即删</td>
+<td><code>acknowledge-mode: auto</code></td>
+</tr>
+<tr>
+<td>② 吞异常 = 放弃重试机会</td>
+<td>「绝对原则」：必须把异常抛出</td>
+</tr>
+<tr>
+<td>③④ 重试耗尽的去留</td>
+<td><code>RepublishMessageRecoverer</code> 转发</td>
+</tr>
+<tr>
+<td>⑤ 重复投递→重复消费</td>
+<td>三重幂等防线</td>
+</tr>
+</tbody>
+</table>
+<p>消息安全送达 MQ 之后，怎么保证它一定被「正确处理、只处理一次」</p>
+<p>这四层手段层层递进：<strong>先保证「处理结果能反馈给 MQ」（确认机制），再保证「失败有机会重来」（重试），再保证「重来不了也别丢」（兜底转发），最后保证「来多少遍结果都一样」（幂等）</strong>。</p>
+<p><strong>一条消息的消费可靠性之旅</strong></p>
+<pre><code>MQ 投递消息
+  │
+  ├─ ① ack 模式 auto：Spring AOP 监听方法结果          （第一层）
+  │     正常 → ack / 异常 → 交给重试
+  │
+  ├─ ② 本地重试 1s/2s/4s × 3 次                        （第二层）
+  │     消息不出 MQ unacked，本地线程 sleep 后重调业务
+  │
+  ├─ ③ 重试耗尽 → RepublishMessageRecoverer            （第三层）
+  │     转发 error.exchange → error.queue → 落库 PENDING
+  │     人工修复 → 删幂等 key + JSON转Map → 重放原交换机
+  │
+  └─ ④ 幂等三重防线                                     （第四层）
+        SETNX 挡板 → 唯一索引兜底 → 状态机建模
+        兜住所有路径的重复投递（补偿重发/重试重投/宕机重投）
+</code></pre>
+<h2 id="sec-1">1. 消费者确认机制</h2>
+<p>为了确认消费者是否成功处理消息，RabbitMQ提供了消费者确认机制（<strong>Consumer Acknowledgement</strong>）。即：当消费者处理消息结束后，应该向RabbitMQ发送一个回执，告知RabbitMQ自己消息处理状态。回执有三种可选值：</p>
+<ul>
+<li>ack：成功处理消息，RabbitMQ从队列中删除该消息</li>
+<li>nack：消息处理失败，RabbitMQ需要再次投递消息</li>
+<li>reject：消息处理失败并拒绝该消息，RabbitMQ从队列中删除该消息</li>
+</ul>
+<p>一般reject方式用的较少，除非是消息格式有问题，那就是开发问题了。因此大多数情况下我们需要将消息处理的代码通过<code>try catch</code>机制捕获，消息处理成功时返回ack，处理失败时返回nack.</p>
+<p>由于消息回执的处理代码比较统一，因此SpringAMQP帮我们实现了消息确认。并允许我们通过配置文件设置ACK处理方式，有三种模式：</p>
+<ul>
+<li><code>none</code>：不处理。即消息投递给消费者后立刻ack，消息会立刻从MQ删除。非常不安全，不建议使用</li>
+<li><code>manual</code>：手动模式。需要自己在业务代码中调用api，发送<code>ack</code>或<code>reject</code>，存在业务入侵，但更灵活</li>
+<li><code>auto</code>：自动模式。SpringAMQP利用AOP对我们的消息处理逻辑做了环绕增强，当业务正常执行时则自动返回<code>ack</code>.  当业务出现异常时，根据异常判断返回不同结果：</li>
+<li>如果是<strong>业务异常</strong>，会自动返回<code>nack</code>；</li>
+<li>如果是<strong>消息处理或校验异常</strong>，自动返回<code>reject</code>;</li>
+</ul>
+<p><strong>关键理解：auto ≠ 「自动成功」</strong>。它是 Spring 用 AOP 拿你的方法结果，代替你按 ack/nack 按钮。所以「抛异常」这个动作本身就是「告诉 MQ 我失败了」——这正是重试机制的触发开关。</p>
+<p>通过下面的配置可以修改SpringAMQP的ACK处理方式：</p>
+<pre><code class="language-yaml">spring:
+  rabbitmq:
+    listener:
+      simple:
+        acknowledge-mode: auto   # none / auto / manual
+</code></pre>
+<h2 id="sec-2">2. 失败重试机制</h2>
+<p>当消费者出现异常后，消息会不断requeue（重入队）到队列，再重新发送给消费者。如果消费者再次执行依然出错，消息会再次requeue到队列，再次投递，直到消息处理成功为止。<br />
+极端情况就是消费者一直无法执行成功，那么消息requeue就会无限循环，导致mq的消息处理飙升，带来不必要的压力：</p>
+<p>当然，上述极端情况发生的概率还是非常低的，不过不怕一万就怕万一。为了应对上述情况Spring又提供了消费者失败重试机制：在消费者出现异常时利用本地重试，而不是无限制的requeue到mq队列。</p>
+<pre><code class="language-yaml">spring:
+  rabbitmq:
+    listener:
+      simple:
+        retry:
+          enabled: true # 开启消费者失败重试
+          initial-interval: 1000ms # 初识的失败等待时长为1秒
+          multiplier: 1 # 失败的等待时长倍数，下次等待时长 = multiplier * last-interval
+          max-attempts: 3 # 最大重试次数
+          stateless: true # true无状态；false有状态。如果业务中包含事务，这里改为false
+</code></pre>
+<p>重启consumer服务，重复之前的测试。可以发现：</p>
+<ul>
+<li>消费者在失败后消息没有重新回到MQ无限重新投递，而是在本地重试了3次</li>
+<li>本地重试3次以后，抛出了<code>AmqpRejectAndDontRequeueException</code>异常。查看RabbitMQ控制台，发现消息被删除了，说明最后SpringAMQP返回的是<code>reject</code></li>
+</ul>
+<p>结论：</p>
+<ul>
+<li>开启本地重试时，消息处理过程中抛出异常，不会requeue到队列，而是在消费者本地重试</li>
+<li>重试达到最大次数后，Spring会返回reject，消息会被丢弃</li>
+</ul>
+<p><strong>「本地」重试是什么意思？</strong></p>
+<pre><code>传统无重试配置：消费者抛异常 → nack(requeue=true) → 消息回 MQ 队列头部 → 立即重新投递 → 再抛 …（死循环）
+本地重试：      消费者抛异常 → 消息不出 MQ 的 unacked 状态，在本地线程 sleep 1s 再调一次业务方法
+</code></pre>
+<p><strong>与生产者 retry 的本质区别</strong></p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>生产者 template.retry</th>
+<th>消费者 listener.retry</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>卡住的是谁</td>
+<td>Tomcat 线程（阻塞 Web 请求）</td>
+<td>消费者本地线程（阻塞的是消费速度，不影响 Web）</td>
+</tr>
+<tr>
+<td>失败后果</td>
+<td>发送失败，靠本地消息表补偿</td>
+<td>重试耗尽进 error.queue，有 RepublishMessageRecoverer 兜底</td>
+</tr>
+<tr>
+<td>雪崩风险</td>
+<td>有（线程池耗尽）</td>
+<td>无（消费线程独立于 Web 线程池）</td>
+</tr>
+</tbody>
+</table>
+<h2 id="sec-3">3. 失败处理策略</h2>
+<p>在之前的测试中，本地测试达到最大重试次数后，消息会被丢弃。这在某些对于消息可靠性要求较高的业务场景下，显然不太合适了。<br />
+因此Spring允许我们自定义重试次数耗尽后的消息处理策略，这个策略是由<code>MessageRecovery</code>接口来定义的，它有3个不同实现：</p>
+<ul>
+<li><code>RejectAndDontRequeueRecoverer</code>：重试耗尽后，直接<code>reject</code>，丢弃消息。默认就是这种方式 （这会导致消息丢失，生产环境极其不推荐！）</li>
+<li><code>ImmediateRequeueMessageRecoverer</code>：重试耗尽后，返回<code>nack</code>，消息重新入队 （这会导致死循环，违背了配置本地重试的初衷，不推荐！）</li>
+<li><code>RepublishMessageRecoverer</code>：重试耗尽后，将失败消息投递到指定的交换机 </li>
+</ul>
+<p>比较优雅的一种处理方案是<code>RepublishMessageRecoverer</code>，失败后将消息投递到一个指定的，专门存放异常消息的队列，后续由人工集中处理。</p>
+<p><img alt="image-20260808160403526" src="images/image-20260808160403526.png" /></p>
+<p><strong>绝对原则：消费者遇到错误时，必须把异常抛出！</strong></p>
+<pre><code class="language-java">@Configuration
+public class ErrorMessageConfig {
+
+    public static final String ERROR_EXCHANGE = &quot;error.exchange&quot;;
+    public static final String ERROR_QUEUE = &quot;error.queue&quot;;
+    public static final String ERROR_ROUTING_KEY = &quot;error.routing.key&quot;;
+
+    // 1. 声明异常交换机
+    @Bean
+    public DirectExchange errorExchange() {
+        return new DirectExchange(ERROR_EXCHANGE);
+    }
+
+    // 2. 声明异常队列
+    @Bean
+    public Queue errorQueue() {
+        return new Queue(ERROR_QUEUE);
+    }
+
+    // 3. 绑定异常队列和异常交换机
+    @Bean
+    public Binding errorBinding() {
+        return BindingBuilder.bind(errorQueue()).to(errorExchange()).with(ERROR_ROUTING_KEY);
+    }
+
+    // 4. 配置 RepublishMessageRecoverer，覆盖 Spring 默认的丢弃策略
+    @Bean
+    public MessageRecoverer republishMessageRecoverer(RabbitTemplate rabbitTemplate) {
+        // 参数：RabbitTemplate, 目标交换机名称, 目标路由键
+        return new RepublishMessageRecoverer(rabbitTemplate, ERROR_EXCHANGE, ERROR_ROUTING_KEY);
+    }
+}
+</code></pre>
+<p><strong>完整的、健壮的消息消费流程应该是这样的：</strong></p>
+<ol>
+<li>消费者收到消息。</li>
+<li>业务处理失败抛出异常。</li>
+<li>Spring 拦截异常，<strong>在本地线程挂起等待</strong>，按配置的递增时间（1s, 2s...）重试。</li>
+<li>重试 3 次仍然失败，Spring 判定此消息彻底无救。</li>
+<li>触发 <code>RepublishMessageRecoverer</code>，Spring 自动将消息投递到 <code>error.queue</code>。</li>
+<li>Spring 给原来的队列发送 <code>ack</code>，将该消息从原队列中删除，防止阻塞。</li>
+<li>运维人员第二天上班，查阅 <code>error.queue</code> 里的死信，修复 Bug 后手动回放处理。</li>
+</ol>
+<h2 id="sec-4">4. 业务幂等性</h2>
+<p>何为幂等性？<br />
+<strong>幂等</strong>是一个数学概念，用函数表达式来描述是这样的：<code>f(x) = f(f(x))</code>，例如求绝对值函数。<br />
+在程序开发中，则是指同一个业务，执行一次或多次对业务状态的影响是一致的。例如：</p>
+<ul>
+<li>根据id删除数据</li>
+<li>查询数据</li>
+<li>新增数据</li>
+</ul>
+<p>但数据的更新往往不是幂等的，如果重复执行可能造成不一样的后果。比如：</p>
+<ul>
+<li>取消订单，恢复库存的业务。如果多次恢复就会出现库存重复增加的情况</li>
+<li>退款业务。重复退款对商家而言会有经济损失。</li>
+</ul>
+<p>所以，我们要尽可能避免业务被重复执行。<br />
+然而在实际业务场景中，由于意外经常会出现业务被重复执行的情况，例如：</p>
+<ul>
+<li>页面卡顿时频繁刷新导致表单重复提交</li>
+<li>服务间调用的重试</li>
+<li>MQ消息的重复投递</li>
+</ul>
+<p>我们在用户支付成功后会发送MQ消息到交易服务，修改订单状态为已支付，就可能出现消息重复投递的情况。如果消费者不做判断，很有可能导致消息被消费多次，出现业务故障。<br />
+举例：</p>
+<ol>
+<li>假如用户刚刚支付完成，并且投递消息到交易服务，交易服务更改订单为<strong>已支付</strong>状态。</li>
+<li>由于某种原因，例如网络故障导致生产者没有得到确认，隔了一段时间后<strong>重新投递</strong>给交易服务。</li>
+<li>但是，在新投递的消息被消费之前，用户选择了退款，将订单状态改为了<strong>已退款</strong>状态。</li>
+<li>退款完成后，新投递的消息才被消费，那么订单状态会被再次改为<strong>已支付</strong>。业务异常。</li>
+</ol>
+<p>要实现幂等性，前提是每一条消息都必须有一个<strong>全局唯一的标识（Business ID 或 Message ID）</strong>，比如订单号 <code>orderId</code>。</p>
+<h3 id="sec-5">1. 数据库唯一索引</h3>
+<p>利用关系型数据库（MySQL）的 <code>Unique Key</code> 机制来防重。</p>
+<ul>
+<li><strong>做法：</strong> 建立一张独立的 <code>mq_consumed_record</code>（消息消费记录表），包含一个唯一的 <code>message_id</code> 字段。每次消费消息前，先 <code>INSERT</code> 一条记录。</li>
+<li><strong>效果：</strong> 如果是重复消息，第二次 <code>INSERT</code> 时数据库会报主键冲突异常（<code>DuplicateKeyException</code>）。我们在代码里 catch 住这个异常，直接返回 <code>ack</code> 给 MQ，告诉它“这条消息之前处理过了，当成功算吧”。</li>
+<li><strong>优点：</strong> 简单粗暴，100% 绝对可靠。DB 的终极防线，最推荐</li>
+</ul>
+<h3 id="sec-6">2. Redis 分布式锁</h3>
+<p>如果你的系统并发极高，直接把请求打到 MySQL 会导致数据库扛不住，可以引入 Redis。</p>
+<ul>
+<li><strong>做法：</strong> 消费者收到消息后，拿 <code>orderId</code> 去 Redis 里执行 <code>SETNX</code> (Set if Not eXists) 命令。</li>
+<li><strong>效果：</strong></li>
+<li>如果设置成功，说明是第一次消费，放行去执行真正的业务逻辑。</li>
+<li>如果设置失败，说明已经被别人抢占或者处理过了，直接丢弃（打个日志，给 MQ 发送 <code>ack</code>）。</li>
+<li><strong>注意：</strong> 记得给 Redis 的 Key 设置一个合理的过期时间（比如 24 小时），防止死锁，也节省内存。</li>
+</ul>
+<h3 id="sec-7">3. 状态机 / 乐观锁控制</h3>
+<p>这种方式不需要额外的表或 Redis，直接在业务数据上做文章。</p>
+<ul>
+<li><strong>基于状态机：</strong> 比如订单有状态：<code>1-待支付</code>、<code>2-已支付</code>、<code>3-已发货</code>。当收到“支付成功”的消息时，SQL 这样写： <code>UPDATE order SET status = 2 WHERE id = 100 AND status = 1;</code> 如果是重复的支付消息，由于第一次执行后状态已经变成了 2，第二次执行时 <code>WHERE status = 1</code> 就不成立，更新行数为 0，这就实现了幂等。</li>
+<li><strong>基于版本号 (乐观锁)：</strong> 给表加一个 <code>version</code> 字段。每次更新 <code>version = version + 1 WHERE version = old_version</code>。</li>
+</ul>
+<p><strong>企业级标准处理流程</strong></p>
+<p>在实际开发中，为了兼顾<strong>性能</strong>与<strong>可靠性</strong>，通常会把方案一和方案二结合起来（Redis 挡并发 + MySQL 兜底）：</p>
+<ol>
+<li>消费者收到消息，提取 <code>业务流水号 (bizId)</code>。</li>
+<li>去 Redis 执行 <code>SETNX bizId</code>，如果失败，说明重复，直接 ACK 并返回。</li>
+<li>如果成功，开启数据库事务。</li>
+<li>检查业务表状态（状态机校验）或插入防重表。若发现已处理，直接 ACK 并返回。</li>
+<li><strong>执行核心业务逻辑</strong>（如加积分、扣库存）。</li>
+<li>提交事务。</li>
+<li>如果第 4~6 步发生异常，回滚事务，并<strong>删除 Redis 中的 Key</strong>（很重要，否则这条消息就再也无法重试了），让 Spring 重试机制接管。</li>
+</ol>
+<p><strong>为什么 Redis 挡了还要查库？</strong> Redis 主从切换/宕机重启可能丢数据，MySQL 是最后防线。<br />
+<strong>为什么异常时必须删 Redis key？</strong> 不删的话下次重试时 SETNX 失败，这条消息就永远无法被处理（卡死）。</p>
+  </article>
+  <div class="pn"><a class="note" href="4.html">← 上一篇：4. 生产者的可靠性</a><a class="note" href="6.html">下一篇：6. 延迟消息 →</a></div>
+</div>
+</div>
+<footer class="page-foot"><span>mq-note / 5.消费者的可靠性.md</span><span>MQ 实验台 · 静态渲染</span></footer>
+<script>
+(function(){
+  var links=[].slice.call(document.querySelectorAll('.toc a[href^="#"]'));
+  if(!links.length)return;
+  var map={};links.forEach(function(a){map[a.getAttribute("href").slice(1)]=a;});
+  var heads=[].slice.call(document.querySelectorAll('.md-body h2[id],.md-body h3[id]'));
+  var tops=[];
+  function measure(){tops=heads.map(function(h){return h.getBoundingClientRect().top+window.scrollY;});}
+  function update(){
+    var y=window.scrollY+120,cur=null;
+    for(var i=0;i<heads.length;i++){if(tops[i]<=y)cur=heads[i].id;}
+    links.forEach(function(a){a.classList.remove("cur");});
+    if(cur&&map[cur])map[cur].classList.add("cur");
+  }
+  addEventListener("scroll",update,{passive:true});
+  addEventListener("resize",function(){measure();update();});
+  measure();update();
+})();
+</script>
+</body>
+</html>
