@@ -6,7 +6,6 @@ import org.springframework.amqp.core.BindingBuilder;
 import org.springframework.amqp.core.CustomExchange;
 import org.springframework.amqp.core.DirectExchange;
 import org.springframework.amqp.core.ExchangeBuilder;
-import org.springframework.amqp.core.FanoutExchange;
 import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.amqp.core.TopicExchange;
@@ -17,7 +16,12 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * RabbitMQ 拓扑声明（@Bean 方式）—— 对应笔记 2.RabbitMQ基础 §8 声明队列和交换机
+ * RabbitMQ 拓扑声明（@Bean 方式）—— 综合实战业务链路专用
+ *
+ * 【mq-demo 与 mq-labs 的分工】
+ *  基础知识点实验（Work 队列 / Fanout / Direct / 消息转换器 / 持久化 / 消费者可靠性）
+ *  全部拆到了 mq-labs/（lab2~lab5，一个知识点一个独立小项目），本项目只保留
+ *  「综合实战」业务主线：下单 -> 支付 -> 交易/积分/短信 -> 订单超时（延迟消息）-> 失败兜底。
  *
  * 【为什么要用代码声明？】（笔记原话）
  *  实际开发中队列和交换机是程序员定义的，交给运维手动创建容易出错。
@@ -95,7 +99,7 @@ public class RabbitTopologyConfig {
     }
 
     // =====================================================================
-    // 二、延迟消息【插件方案】：x-delayed-message 类型交换机（笔记 6.延迟消息 §2 DelayExchange插件）
+    // 二、延迟消息【插件方案】：x-delayed-message 类型交换机（笔记 6.延迟消息 §2.2 DelayExchange插件）
     // =====================================================================
 
     /**
@@ -132,7 +136,7 @@ public class RabbitTopologyConfig {
     }
 
     // =====================================================================
-    // 三、延迟消息【TTL + 死信交换机方案】（笔记 6.延迟消息 §1 死信交换机）
+    // 三、延迟消息【TTL + 死信交换机方案】（笔记 6.延迟消息 §2.1 DLX + TTL，死信交换机见 §1）
     // =====================================================================
     //  插件方案 vs TTL+DLX 方案对比：
     //  - 插件方案：延迟时间写在【消息】上，每条消息可以不同延迟，且不受队头阻塞影响（推荐）
@@ -179,104 +183,5 @@ public class RabbitTopologyConfig {
         return BindingBuilder.bind(orderDlxQueue())
                 .to(orderDlxExchange())
                 .with(MqConstants.KEY_ORDER_TIMEOUT);
-    }
-
-    // =====================================================================
-    // 四、Work 队列（LazyQueue 惰性队列）（笔记 2.RabbitMQ基础 §3 + 3.数据持久化 §2 LazyQueue）
-    // =====================================================================
-
-    /**
-     * Work 队列：声明为 LazyQueue。
-     *
-     * 【为什么 Work 队列特别适合 LazyQueue？】
-     *  Work 模型就是为了应对「生产快、消费慢」的消息堆积场景。
-     *  普通队列消息存内存，堆积多了触发 PageOut（内存刷盘），会阻塞整个队列；
-     *  LazyQueue 消息直接写磁盘，可以稳定堆积数百万条。
-     *  （3.12 版本后所有队列默认就是 Lazy 模式，这里显式声明便于理解历史版本）
-     */
-    @Bean
-    public Queue workQueue() {
-        return QueueBuilder.durable(MqConstants.WORK_QUEUE)
-                .lazy()   // 设置 x-queue-mode=lazy 参数
-                .build();
-    }
-
-    // =====================================================================
-    // 五、Fanout 广播（缓存刷新）（笔记 2.RabbitMQ基础 §6 Fanout Exchange）
-    // =====================================================================
-
-    /** 广播交换机：不需要路由键，绑定即广播。速度最快（不做任何匹配计算） */
-    @Bean
-    public FanoutExchange cacheFanoutExchange() {
-        return ExchangeBuilder.fanoutExchange(MqConstants.CACHE_FANOUT_EXCHANGE).durable(true).build();
-    }
-
-    /** 节点 A 的广播队列 */
-    @Bean
-    public Queue cacheQueueA() {
-        return QueueBuilder.durable(MqConstants.CACHE_QUEUE_A).build();
-    }
-
-    /** 节点 B 的广播队列 */
-    @Bean
-    public Queue cacheQueueB() {
-        return QueueBuilder.durable(MqConstants.CACHE_QUEUE_B).build();
-    }
-
-    /** Fanout 绑定不需要 with(routingKey) */
-    @Bean
-    public Binding cacheQueueABinding() {
-        return BindingBuilder.bind(cacheQueueA()).to(cacheFanoutExchange());
-    }
-
-    @Bean
-    public Binding cacheQueueBBinding() {
-        return BindingBuilder.bind(cacheQueueB()).to(cacheFanoutExchange());
-    }
-
-    // =====================================================================
-    // 六、Direct 定向分发（物流）（笔记 2.RabbitMQ基础 §5 Direct Exchange）
-    // =====================================================================
-
-    /** 直连交换机：RoutingKey 完全相等才路由，点对点精确投递 */
-    @Bean
-    public DirectExchange logisticsDirectExchange() {
-        return ExchangeBuilder.directExchange(MqConstants.LOGISTICS_DIRECT_EXCHANGE).durable(true).build();
-    }
-
-    /** 普通物流队列 */
-    @Bean
-    public Queue logisticsStandardQueue() {
-        return QueueBuilder.durable(MqConstants.LOGISTICS_STANDARD_QUEUE).build();
-    }
-
-    /** 加急物流队列 */
-    @Bean
-    public Queue logisticsExpressQueue() {
-        return QueueBuilder.durable(MqConstants.LOGISTICS_EXPRESS_QUEUE).build();
-    }
-
-    @Bean
-    public Binding logisticsStandardBinding() {
-        return BindingBuilder.bind(logisticsStandardQueue())
-                .to(logisticsDirectExchange())
-                .with(MqConstants.KEY_LOGISTICS_STANDARD);
-    }
-
-    @Bean
-    public Binding logisticsExpressBinding() {
-        return BindingBuilder.bind(logisticsExpressQueue())
-                .to(logisticsDirectExchange())
-                .with(MqConstants.KEY_LOGISTICS_EXPRESS);
-    }
-
-    // =====================================================================
-    // 七、消息转换器演示队列（笔记 2.RabbitMQ基础 §9 消息转换器）
-    // =====================================================================
-
-    /** 对象消息队列 */
-    @Bean
-    public Queue objectQueue() {
-        return QueueBuilder.durable(MqConstants.OBJECT_QUEUE).build();
     }
 }

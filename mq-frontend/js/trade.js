@@ -113,4 +113,4 @@ $("btnCompensate").addEventListener("click", async () => {
 });
 
 loadAll();
-setInterval(loadAll, 3000);
+setupPolling(loadAll);

@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    mq-labs：RabbitMQ 分主题实验工程（与 mq-demo 平级、互不依赖）
+
+    定位：每篇笔记一个独立可运行的 Spring Boot 小项目，目录里只有该笔记的知识点。
+    学完各 lab 后，到 mq-demo 看所有知识点如何在真实业务里协作（综合实战）。
+
+    ├─ lab2-basic     笔记 2.RabbitMQ基础       端口 8102
+    ├─ lab3-persist   笔记 3.数据持久化         端口 8103
+    ├─ lab4-producer  笔记 4.生产者的可靠性     端口 8104
+    ├─ lab5-consumer  笔记 5.消费者的可靠性     端口 8105
+    └─ lab6-delay     笔记 6.延迟消息           端口 8106
+
+    设计原则：
+      1. 自包含：不建共享模块，宁可重复十几行配置，保证「打开目录 = 只见这一个知识点」
+      2. 拓扑名 labN. 前缀：与 mq-demo 的 demo.* 互不冲突，管理台一眼分组
+      3. 单应用收发：发送与消费在同一个进程，「对方角色」用极简 stub 承担
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>2.7.12</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>com.study.labs</groupId>
+    <artifactId>mq-labs</artifactId>
+    <version>1.0.0</version>
+    <packaging>pom</packaging>
+
+    <modules>
+        <module>lab2-basic</module>
+        <module>lab3-persist</module>
+        <module>lab4-producer</module>
+        <module>lab5-consumer</module>
+        <module>lab6-delay</module>
+    </modules>
+
+    <properties>
+        <java.version>17</java.version>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
+
+    <dependencies>
+        <!-- Spring AMQP：RabbitMQ 的 Spring 封装（每个 lab 的主角） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-amqp</artifactId>
+        </dependency>
+        <!-- Web：提供触发实验的 Controller，顺带引入 Jackson（JSON 消息转换器依赖它） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <!-- Lombok：@Slf4j / @Data 等注解简化代码 -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+    </dependencies>
+</project>

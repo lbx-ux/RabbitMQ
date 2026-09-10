@@ -39,4 +39,4 @@ function renderIdem(rows) {
 }
 
 loadAll();
-setInterval(loadAll, 3000);
+setupPolling(loadAll);

@@ -1,5 +1,5 @@
 server:
-  port: 8082   # 8081 被本机 Nexus 服务占用，改用 8082
+  port: 8083   # 8081 被本机 Nexus 服务占用，改用 8083
 
 spring:
   application:

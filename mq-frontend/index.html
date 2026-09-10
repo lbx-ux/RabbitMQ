@@ -28,6 +28,14 @@
     <a href="notes.html">学习笔记</a>
   </nav>
   <div class="topbar-side">
+    <label class="poll-box">
+      <select id="pollSel" aria-label="自动刷新间隔">
+        <option value="3000">3s</option>
+        <option value="10000">10s</option>
+        <option value="0">关闭</option>
+      </select>
+    </label>
+    <button class="btn sm" id="btnRefresh" title="立即刷新数据">刷新</button>
     <span class="live" id="liveBadge" role="status" aria-atomic="true">
       <i class="led" aria-hidden="true"></i><span id="liveText">连接中…</span>
     </span>
@@ -159,11 +167,11 @@
 </section>
 
 <footer class="page-foot">
-  <span>mq-demo · publisher :8080 · consumer :8082 · 数据 3s 自动刷新</span>
+  <span>mq-demo · publisher :8080 · consumer :8083 · <span id="footPoll">数据每 3s 自动刷新</span></span>
   <span>MQ 实验台 · GitHub 深色主题</span>
 </footer>
 
-<script src="js/common.js"></script>
-<script src="js/overview.js"></script>
+<script src="js/common.js?v=4"></script>
+<script src="js/overview.js?v=4"></script>
 </body>
 </html>

@@ -1,0 +1,46 @@
+server:
+  port: 8104
+
+spring:
+  application:
+    name: lab4-producer
+  datasource:
+    url: jdbc:mysql://192.168.146.130:3306/mq_demo?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&createDatabaseIfNotExist=true&allowPublicKeyRetrieval=true&useSSL=false
+    username: root
+    password: 123456
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
+  rabbitmq:
+    host: 192.168.146.130
+    port: 5672
+    username: admin
+    password: admin
+    virtual-host: /
+
+    # ==================== §1 生产者重试机制（笔记 4.生产者的可靠性 §1）====================
+    # 【解决什么问题】网络抖动/瞬时故障时，第一次 send 可能失败；
+    # 开启重试后 RabbitTemplate 会在本地自动重试，业务代码无感。
+    # 【大坑】笔记原话：这个重试是【阻塞式】的 —— 等待期间生产者线程被挂起，
+    # 高并发下线程会被大量占满，影响整个服务。所以只适合低频核心消息，海量消息别开。
+    template:
+      retry:
+        enabled: true             # 开启生产者重试
+        initial-interval: 1000ms  # 首次重试间隔 1 秒
+        multiplier: 2             # 每次翻倍：1s -> 2s -> 4s
+        max-attempts: 3           # 最多尝试 3 次（1 次原始 + 2 次重试）
+
+    # ==================== §3.1 开启生产者确认（笔记 4.生产者的可靠性 §3.1）====================
+    # publisher-confirm-type：Confirm 机制（消息有没有到达交换机）
+    #   correlated = 发送时携带 CorrelationData，回执异步回到回调 —— 生产推荐
+    #   simple / none 不适合做回执闭环
+    publisher-confirm-type: correlated
+    # publisher-returns：Return 机制（消息到了交换机但路由不到任何队列时退回给生产者）
+    # 注意：笔记原话「路由失败也会 ack」—— Return 和 Confirm 是互补关系，不是互斥
+    publisher-returns: true
+
+logging:
+  level:
+    com.study.lab4: info

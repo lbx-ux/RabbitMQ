@@ -1,0 +1,22 @@
+server:
+  port: 8103
+
+spring:
+  application:
+    name: lab3-persist
+  rabbitmq:
+    host: 192.168.146.130
+    port: 5672
+    username: admin
+    password: admin
+    virtual-host: /
+    listener:
+      simple:
+        prefetch: 1
+
+logging:
+  level:
+    com.study.lab3: info
+
+# 注意：持久化是「存储层」的知识点，现象主要在【管理台】看（队列类型、内存/磁盘分布），
+# 控制台只有简单的消费日志。不涉及确认/重试（lab4、lab5 的主题）。

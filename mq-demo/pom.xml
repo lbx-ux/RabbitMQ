@@ -5,7 +5,7 @@
     业务背景：电商「下单 → 余额支付 → 异步通知」闭环
     ├─ mq-common    公共模块：消息 DTO、MQ 常量、交换机/队列拓扑声明、全局 MQ 配置
     ├─ mq-publisher 生产者服务（订单 + 支付），端口 8080
-    ├─ mq-consumer  消费者服务（交易/积分/短信/超时取消），端口 8082
+    ├─ mq-consumer  消费者服务（交易/积分/短信/超时取消），端口 8083
 
     技术栈：Spring Boot 2.7.12（与笔记保持一致）+ MyBatis-Plus + Redis + MySQL
 -->

@@ -1,0 +1,24 @@
+server:
+  port: 8102
+
+spring:
+  application:
+    name: lab2-basic
+  rabbitmq:
+    host: 192.168.146.130
+    port: 5672
+    username: admin
+    password: admin
+    virtual-host: /
+    listener:
+      simple:
+        # prefetch=1 是「能者多劳」的关键（笔记 2.RabbitMQ基础 §3.4）：
+        # 每个消费者一次只取 1 条，处理完才取下一条 —— 谁空闲谁先领
+        prefetch: 1
+
+logging:
+  level:
+    com.study.lab2: info
+
+# 注意：本 lab 刻意【不配置】 retry / confirm / returns —— 那些是 lab4、lab5 的主题。
+# 这个 lab 只回答三个问题：消息怎么发（RabbitTemplate）、怎么路由（交换机）、怎么收（@RabbitListener）。

@@ -81,7 +81,7 @@ public class OrderService {
      * 插件方案发送延迟消息
      *
      * 关键点：通过 MessagePostProcessor 给消息设置 x-delay 头（毫秒）。
-     * 延迟交换机看到 x-delay 后会暂存消息，到期才投递 —— 笔记 6.延迟消息「3. 发送延迟消息」的写法。
+     * 延迟交换机看到 x-delay 后会暂存消息，到期才投递 —— 笔记 6.延迟消息 §2.2.3「发送延迟消息」的写法。
      */
     private void sendDelayMessageByPlugin(Order order) {
         OrderTimeoutMessage msg = OrderTimeoutMessage.builder()

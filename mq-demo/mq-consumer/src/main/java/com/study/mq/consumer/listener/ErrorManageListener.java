@@ -48,7 +48,15 @@ public class ErrorManageListener {
         log.error("[错误消息] 失败原因: {}", failReason);
         log.error("[错误消息] 死亡履历(x-death): {}", xDeath);
 
-        // 落库，等人工处理
+        // 落库，等人工处理。failReason 截断到 450 字符：fail_reason 列是 TEXT(64KB)，
+        // x-exception-message 理论上仍可能超长（如堆栈拼接），截断保证 insert 永不因超长失败
+        // —— 落库失败会让消息重试耗尽又被转回 error.queue，形成死循环刷屏
+        final int MAX_REASON = 450;
+        if (failReason != null && failReason.length() > MAX_REASON) {
+            log.warn("[错误消息] 失败原因超过 {} 字符，截断存储（原文 {} 字符）", MAX_REASON, failReason.length());
+            failReason = failReason.substring(0, MAX_REASON) + "…(截断)";
+        }
+
         ErrorMessage record = new ErrorMessage();
         record.setContent(body);
         // 注意：error.queue 是「错误消息停车场」，重放时应该发回【原业务交换机】。

@@ -1,11 +1,11 @@
 /* ============================================================
    MQ 实验台 —— 公共逻辑：后端地址、请求封装、日志、徽章工具
-   publisher :8080（业务接口） / consumer :8082（消费结果+错误管理）
+   publisher :8080（业务接口） / consumer :8083（消费结果+错误管理）
    ============================================================ */
 'use strict';
 
 const PUB = 'http://localhost:8080';
-const CON = 'http://localhost:8082';
+const CON = 'http://localhost:8083';
 const $ = id => document.getElementById(id);
 
 /* ---------- 日志面板（每页底部都有） ---------- */
@@ -51,3 +51,27 @@ const badge = (map, s) => {
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const money = v => '¥' + (v / 100).toFixed(2);
 const busy = (btn, on) => { btn.disabled = on; };
+
+/* ---------- 轮询控制：间隔用户可选（3s/10s/关闭），选择记忆在 localStorage ---------- */
+const poll = {timer: null, ms: 3000};
+function applyPoll(fn) {
+  if (poll.timer) clearInterval(poll.timer);
+  poll.timer = poll.ms > 0 ? setInterval(fn, poll.ms) : null;
+  const sel = $('pollSel'), foot = $('footPoll');
+  if (sel) sel.value = String(poll.ms);
+  if (foot) foot.textContent = poll.ms > 0
+    ? '数据每 ' + (poll.ms / 1000) + 's 自动刷新'
+    : '自动刷新已关闭，点「刷新」更新';
+}
+function setupPolling(fn) {
+  const saved = Number(localStorage.getItem('pollMs'));
+  poll.ms = [3000, 10000, 0].includes(saved) ? saved : 3000;
+  const sel = $('pollSel'), btn = $('btnRefresh');
+  if (sel) sel.addEventListener('change', () => {
+    poll.ms = Number(sel.value);
+    localStorage.setItem('pollMs', sel.value);
+    applyPoll(fn);
+  });
+  if (btn) btn.addEventListener('click', () => fn());
+  applyPoll(fn);
+}

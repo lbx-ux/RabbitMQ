@@ -1,0 +1,52 @@
+server:
+  port: 8105
+
+spring:
+  application:
+    name: lab5-consumer
+  datasource:
+    url: jdbc:mysql://192.168.146.130:3306/mq_demo?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&createDatabaseIfNotExist=true&allowPublicKeyRetrieval=true&useSSL=false
+    username: root
+    password: 123456
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
+  redis:
+    host: 192.168.146.130
+    port: 6379
+    password: 123456
+  rabbitmq:
+    host: 192.168.146.130
+    port: 5672
+    username: admin
+    password: admin
+    virtual-host: /
+
+    # ==================== 消费者配置（笔记 5.消费者的可靠性 §1/§2/§3）====================
+    listener:
+      simple:
+        # prefetch：每个消费者每次最多预取 1 条，处理完才取下一条（能者多劳，笔记 2 §3.4）
+        prefetch: 1
+
+        # acknowledge-mode 消费者确认模式（笔记 §1 消费者确认机制）：
+        #   none   投递即 ack，消息立刻删除 —— 不安全，别用
+        #   manual 手动调 channel.basicAck/basicNack —— 灵活但业务入侵（对照实验见 ManualAckDemoListener）
+        #   auto   Spring AOP 环绕增强：正常执行->ack；业务异常->nack（触发重试/重投）；
+        #          消息转换异常->reject（丢弃）
+        #   auto 是「手动确认」的框架化封装：不用自己调 basicAck，又保住「处理完才确认」的安全性
+        acknowledge-mode: auto
+
+        # 消费者失败重试：本地重试而不是无限 requeue 回 MQ（笔记 §2 失败重试机制）
+        retry:
+          enabled: true             # 开启本地重试（失败消息不会无限 requeue）
+          initial-interval: 1000ms  # 第一次重试等 1 秒
+          multiplier: 2             # 每次翻倍：1s -> 2s -> 4s（指数退避）
+          max-attempts: 3           # 最多尝试 3 次（1 次原始 + 2 次重试）
+          max-interval: 10000ms     # 重试间隔上限 10 秒
+          stateless: true           # true=无状态重试；业务含事务时建议 false（有状态）
+
+logging:
+  level:
+    com.study.lab5: info

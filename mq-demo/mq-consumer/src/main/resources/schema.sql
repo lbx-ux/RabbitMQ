@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS `error_message` (
     `content`            TEXT         NOT NULL COMMENT '原始消息体JSON',
     `origin_exchange`    VARCHAR(64)  NULL COMMENT '原始交换机',
     `origin_routing_key` VARCHAR(64)  NULL COMMENT '原始路由键',
-    `fail_reason`        VARCHAR(512) NULL COMMENT '失败原因',
+    `fail_reason`        TEXT         NULL COMMENT '失败原因（x-exception-message 完整异常信息，可能很长）',
     `status`             VARCHAR(16)  NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING/REPLAYED',
     `create_time`        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '入库时间',
     PRIMARY KEY (`id`)

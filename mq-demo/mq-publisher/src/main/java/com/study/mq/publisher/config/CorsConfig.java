@@ -10,7 +10,7 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
  * 【为什么需要它？】
  *  页面正常部署在本服务的 static/ 下（http://localhost:8080）时是同源请求，其实不需要 CORS。
  *  但如果你用 VS Code Live Server（:5500）、直接双击 HTML（file://）等方式打开页面，
- *  浏览器的同源策略就会拦截对 :8080 / :8082 的 fetch 请求。
+ *  浏览器的同源策略就会拦截对 :8080 / :8083 的 fetch 请求。
  *  学习项目从宽处理：放开所有来源 + GET/POST，保证页面用任何方式打开都能用。
  *
  * 【生产环境的正确姿势】（面试也常问）

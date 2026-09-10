@@ -18,4 +18,4 @@ async function loadAll() {
   }
 }
 loadAll();
-setInterval(loadAll, 3000);
+setupPolling(loadAll);

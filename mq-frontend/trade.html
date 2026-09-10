@@ -28,6 +28,14 @@
     <a href="notes.html">学习笔记</a>
   </nav>
   <div class="topbar-side">
+    <label class="poll-box">
+      <select id="pollSel" aria-label="自动刷新间隔">
+        <option value="3000">3s</option>
+        <option value="10000">10s</option>
+        <option value="0">关闭</option>
+      </select>
+    </label>
+    <button class="btn sm" id="btnRefresh" title="立即刷新数据">刷新</button>
     <span class="live" id="liveBadge" role="status" aria-atomic="true">
       <i class="led" aria-hidden="true"></i><span id="liveText">连接中…</span>
     </span>
@@ -116,11 +124,11 @@
 </section>
 
 <footer class="page-foot">
-  <span>mq-demo · publisher :8080 · 数据 3s 自动刷新</span>
+  <span>mq-demo · publisher :8080 · <span id="footPoll">数据每 3s 自动刷新</span></span>
   <span>对应笔记：2.RabbitMQ基础「二. 业务示例」 · 4.生产者的可靠性 · 6.延迟消息</span>
 </footer>
 
-<script src="js/common.js"></script>
-<script src="js/trade.js"></script>
+<script src="js/common.js?v=4"></script>
+<script src="js/trade.js?v=4"></script>
 </body>
 </html>
