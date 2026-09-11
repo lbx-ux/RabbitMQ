@@ -42,7 +42,7 @@ public final class MqConstants {
     public static final String SMS_PAY_QUEUE = "demo.sms.pay.queue";
 
     // =====================================================================
-    // 二、订单超时取消（延迟消息）—— 笔记 6.延迟消息
+    // 二、订单超时取消（延迟消息）—— 笔记 7.延迟消息
     // =====================================================================
 
     /** 延迟交换机（需要安装 rabbitmq_delayed_message_exchange 插件，类型 x-delayed-message） */
@@ -53,7 +53,7 @@ public final class MqConstants {
     public static final String KEY_ORDER_TIMEOUT = "order.timeout";
 
     // =====================================================================
-    // 三、TTL + 死信交换机方案（延迟消息的备选实现）—— 笔记 6.延迟消息 §2.1 DLX + TTL
+    // 三、TTL + 死信交换机方案（延迟消息的备选实现）—— 笔记 7.延迟消息 §2.1 DLX + TTL
     // =====================================================================
 
     /** TTL 队列：消息进队后设置 10 秒过期，过期后变成死信转发给死信交换机 */
@@ -64,7 +64,7 @@ public final class MqConstants {
     public static final String ORDER_DLX_QUEUE = "demo.order.dlx.queue";
 
     // =====================================================================
-    // 四、消费者失败重试兜底（RepublishMessageRecoverer）—— 笔记 5.消费者的可靠性 §3
+    // 四、消费者失败重试兜底（RepublishMessageRecoverer）—— 笔记 6.消费者的可靠性 §3
     // =====================================================================
 
     /** 异常交换机：本地重试耗尽后，失败消息被转发到这里 */

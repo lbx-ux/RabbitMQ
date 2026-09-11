@@ -15,7 +15,7 @@ import java.time.LocalDateTime;
 
 /**
  * 短信服务监听器 —— 演示「消费失败 → 本地重试 → RepublishMessageRecoverer」全流程
- * （笔记 5.消费者的可靠性 §3 失败处理策略）
+ * （笔记 6.消费者的可靠性 §3 失败处理策略）
  *
  * 【怎么触发失败？】
  *  支付时传 mobile=13800000000（黑名单号码），本监听器会抛出 RuntimeException：
@@ -31,7 +31,7 @@ import java.time.LocalDateTime;
  *    8. 人工修复问题后（如把手机号移出黑名单），调 POST /error/replay/{id} 重放回原交换机
  *
  * 【重要：监听器里绝不能 try-catch 吞异常！】
- *  笔记 5.消费者的可靠性 §3 原话「绝对原则：消费者遇到错误时，必须把异常抛出！」
+ *  笔记 6.消费者的可靠性 §3 原话「绝对原则：消费者遇到错误时，必须把异常抛出！」
  *  异常被吞掉 Spring 就认为消费成功直接 ACK，消息丢了重试机会。
  */
 @Slf4j
@@ -59,7 +59,7 @@ public class SmsListener {
         // ============ 模拟真实短信发送 ============
         // 黑名单号码 -> 抛异常 -> 触发本地重试 3 次 -> RepublishMessageRecoverer -> error.queue
         if (BLACKLIST_MOBILE.equals(mobile)) {
-            // 直接抛出！绝不 try-catch 吞掉（笔记 5.消费者的可靠性 §3「绝对原则」）
+            // 直接抛出！绝不 try-catch 吞掉（笔记 6.消费者的可靠性 §3「绝对原则」）
             // 抛出后 Spring 会：本地重试 -> 耗尽后 RepublishMessageRecoverer 转 error.queue
             throw new RuntimeException(
                     "[模拟] 手机号 " + mobile + " 在黑名单中，短信发送失败（订单 " + message.getOrderNo() + "）");

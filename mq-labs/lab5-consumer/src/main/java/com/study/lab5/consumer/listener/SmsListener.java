@@ -15,7 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 
 /**
- * 短信消费者 —— lab5 主角，对应笔记 5.消费者的可靠性 §2 重试机制 + §3 失败处理 + §4 幂等
+ * 短信消费者 —— lab5 主角，对应笔记 6.消费者的可靠性 §2 重试机制 + §3 失败处理 + §4 幂等
  *
  * 【本类贯穿的三个知识点】
  *  §2 本地重试：业务抛异常后 Spring 在消费者本地重试（yaml: 1s/2s/4s 共 3 次），

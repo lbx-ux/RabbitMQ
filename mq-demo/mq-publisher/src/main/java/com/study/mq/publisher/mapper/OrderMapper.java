@@ -13,7 +13,7 @@ import org.apache.ibatis.annotations.Update;
 public interface OrderMapper extends BaseMapper<Order> {
 
     /**
-     * 「支付成功」状态机更新 —— 幂等的核心（笔记 5.消费者的可靠性 §4.3 状态机）
+     * 「支付成功」状态机更新 —— 幂等的核心（笔记 6.消费者的可靠性 §4.3 状态机）
      *
      * SQL: UPDATE orders SET status=1 WHERE order_no=? AND status=0
      *  - 第一次执行：status=0 成立，更新成功，返回 1
@@ -35,7 +35,7 @@ public interface OrderMapper extends BaseMapper<Order> {
 
     /**
      * 「退款」状态机更新：只有已支付(1)的订单才能退款
-     * 防止重复退款（重复退款 = 商家经济损失，笔记 5.消费者的可靠性 §4 开头举的例子）
+     * 防止重复退款（重复退款 = 商家经济损失，笔记 6.消费者的可靠性 §4 开头举的例子）
      *
      * @return 影响行数：1=真实退款；0=订单状态不允许退款（未支付/已取消/已退款）
      */

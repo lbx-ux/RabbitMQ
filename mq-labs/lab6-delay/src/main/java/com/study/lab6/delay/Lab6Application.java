@@ -4,7 +4,7 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 /**
- * lab6 启动类 —— 笔记 6.延迟消息 全部实验
+ * lab6 启动类 —— 笔记 7.延迟消息 全部实验
  *
  * 内容与笔记章节一一对应：
  *   §1 死信交换机（手动确认拒签 -> DLX -> 死信队列，x-death 特征）

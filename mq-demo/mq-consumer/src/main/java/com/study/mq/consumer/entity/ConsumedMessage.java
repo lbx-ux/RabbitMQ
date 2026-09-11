@@ -10,7 +10,7 @@ import java.time.LocalDateTime;
 /**
  * 消息消费记录表（ mq_demo.consumed_message ）
  *
- * 幂等方案一「数据库唯一索引」的载体（笔记 5.消费者的可靠性 §4.1）：
+ * 幂等方案一「数据库唯一索引」的载体（笔记 6.消费者的可靠性 §4.1）：
  *   message_id 建了 UNIQUE KEY —— 重复消息 INSERT 时抛 DuplicateKeyException，
  *   消费者 catch 住后直接 ACK，告诉 MQ「这条消息之前处理过了，当成功算吧」。
  */

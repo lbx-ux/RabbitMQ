@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>消费者的可靠性 · MQ 实验台</title>
+<title>本地消息表 · MQ 实验台</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" media="print" onload="this.media='all'"
@@ -24,270 +24,726 @@
   </div>
 </header>
 <div class="note-layout">
-<aside class="toc" aria-label="目录"><div class="toc-title">目录</div><a class="lv2" href="#sec-1">1. 消费者确认机制</a><a class="lv2" href="#sec-2">2. 失败重试机制</a><a class="lv2" href="#sec-3">3. 失败处理策略</a><a class="lv2" href="#sec-4">4. 业务幂等性</a><a class="lv3" href="#sec-5">1. 数据库唯一索引</a><a class="lv3" href="#sec-6">2. Redis 分布式锁</a><a class="lv3" href="#sec-7">3. 状态机 / 乐观锁控制</a></aside>
+<aside class="toc" aria-label="目录"><div class="toc-title">目录</div><a class="lv2" href="#sec-1">1. 核心思想</a><a class="lv2" href="#sec-2">2. 表设计</a><a class="lv2" href="#sec-3">3. 正常流程全链路</a><a class="lv2" href="#sec-4">4. 代码实现（四大组件）</a><a class="lv3" href="#sec-5">1. 落库：saveMessage</a><a class="lv3" href="#sec-6">2. 事务 + 发送时序：sendAfterCommit</a><a class="lv3" href="#sec-7">3. 发送 + Confirm 闭环：send</a><a class="lv3" href="#sec-8">4. 补偿：retrySend + 定时扫描</a><a class="lv2" href="#sec-9">5. 完整代码</a><a class="lv3" href="#sec-10">MqCallbackConfig</a><a class="lv3" href="#sec-11">ProducerController</a><a class="lv3" href="#sec-12">LocalMessageSender</a><a class="lv3" href="#sec-13">CompensationTask</a><a class="lv2" href="#sec-14">6. 异常场景</a><a class="lv2" href="#sec-15">7. 状态机全景与人工兜底</a><a class="lv2" href="#sec-16">8. 补偿必然导致重复投递</a></aside>
 <div class="md-wrap">
   <div class="md-head">
-    <h2>《5. 消费者的可靠性》</h2>
-    <p class="fine">确认 · 重试 · 死信兜底 · 幂等</p>
+    <h2>《5. 本地消息表》</h2>
+    <p class="fine">分布式事务 · Confirm闭环 · 定时补偿</p>
   </div>
   <article class="md-body">
-<h1>消费者的可靠性</h1>
-<p>发送端把消息安全送到了 MQ，消费端的风险从投递那一刻开始：</p>
-<pre><code>MQ ──① none 模式：投递即删，消费者宕机消息就丢──────────────&gt; 丢
-MQ ──② 业务异常被 try-catch 吞掉 → Spring 以为成功 → ACK ──&gt; 丢（重试机制完全失效）
-MQ ──③ 重试耗尽后默认策略 = 直接 reject 丢弃────────────────&gt; 丢
-MQ ──④ 重试耗尽后 ImmediateRequeue 无限重回队列─────────────&gt; 死循环
-MQ ──⑤ 同一条消息被投递 2~N 次（补偿重发/重试重投/宕机重投）→ 重复消费事故
-</code></pre>
+<h1>本地消息表</h1>
+<p><strong>为什么有了 Confirm/Return 还不够</strong></p>
+<p>Confirm/Return 只能「<strong>感知</strong>」丢失，不能「<strong>挽回</strong>」丢失。</p>
+<p>把三种真实事故摆在它面前，就看出无能为力了：</p>
 <table>
 <thead>
 <tr>
-<th>风险</th>
-<th>对应手段</th>
+<th>#</th>
+<th>事故场景</th>
+<th>Confirm/Return 能做什么</th>
+<th>为什么不够</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>① 投递即删</td>
-<td><code>acknowledge-mode: auto</code></td>
+<td>1</td>
+<td>ack 回执在网络中丢了（MQ 其实收到了）</td>
+<td>收不到回执，你只知道「没回音」</td>
+<td>无法区分「MQ 没收到」和「ack 丢了」，不知道该不该重发</td>
 </tr>
 <tr>
-<td>② 吞异常 = 放弃重试机会</td>
-<td>「绝对原则」：必须把异常抛出</td>
+<td>2</td>
+<td>消息还没发出去，进程就崩了</td>
+<td>什么都不触发（人都死了，谁来收回执？）</td>
+<td>业务已提交（钱扣了），消息却永远发不出去</td>
 </tr>
 <tr>
-<td>③④ 重试耗尽的去留</td>
-<td><code>RepublishMessageRecoverer</code> 转发</td>
-</tr>
-<tr>
-<td>⑤ 重复投递→重复消费</td>
-<td>三重幂等防线</td>
+<td>3</td>
+<td>就算感知到失败，回调里该干什么？</td>
+<td>——</td>
+<td><strong>回调里拿不到原始消息</strong>，想重发都不知道重发什么</td>
 </tr>
 </tbody>
 </table>
-<p>消息安全送达 MQ 之后，怎么保证它一定被「正确处理、只处理一次」</p>
-<p>这四层手段层层递进：<strong>先保证「处理结果能反馈给 MQ」（确认机制），再保证「失败有机会重来」（重试），再保证「重来不了也别丢」（兜底转发），最后保证「来多少遍结果都一样」（幂等）</strong>。</p>
-<p><strong>一条消息的消费可靠性之旅</strong></p>
-<pre><code>MQ 投递消息
-  │
-  ├─ ① ack 模式 auto：Spring AOP 监听方法结果          （第一层）
-  │     正常 → ack / 异常 → 交给重试
-  │
-  ├─ ② 本地重试 1s/2s/4s × 3 次                        （第二层）
-  │     消息不出 MQ unacked，本地线程 sleep 后重调业务
-  │
-  ├─ ③ 重试耗尽 → RepublishMessageRecoverer            （第三层）
-  │     转发 error.exchange → error.queue → 落库 PENDING
-  │     人工修复 → 删幂等 key + JSON转Map → 重放原交换机
-  │
-  └─ ④ 幂等三重防线                                     （第四层）
-        SETNX 挡板 → 唯一索引兜底 → 状态机建模
-        兜住所有路径的重复投递（补偿重发/重试重投/宕机重投）
+<p>第 3 点是最容易被忽略的：Confirm 回调只给你一个 <code>messageId</code> 和 ack/nack 标志。<br />
+要重发，你得能<strong>重新拿到那条消息的完整内容、目标交换机、路由键</strong>——这要求消息在发送前就被持久化在某处。</p>
+<p>再往深一层，这本质上是<strong>分布式事务</strong>问题：</p>
+<pre><code>扣款（写数据库） + 发 MQ 消息（网络操作） = 两个无法用同一个事务保证的动作
+
+BEGIN TRANSACTION
+    UPDATE account SET balance = balance - 100;   -- ① 数据库操作，可回滚
+    rabbitTemplate.convertAndSend(...);           -- ② 网络操作，不受事务管辖！
+COMMIT                                            -- 若 commit 失败，②已经发出去收不回来
 </code></pre>
-<h2 id="sec-1">1. 消费者确认机制</h2>
-<p>为了确认消费者是否成功处理消息，RabbitMQ提供了消费者确认机制（<strong>Consumer Acknowledgement</strong>）。即：当消费者处理消息结束后，应该向RabbitMQ发送一个回执，告知RabbitMQ自己消息处理状态。回执有三种可选值：</p>
-<ul>
-<li>ack：成功处理消息，RabbitMQ从队列中删除该消息</li>
-<li>nack：消息处理失败，RabbitMQ需要再次投递消息</li>
-<li>reject：消息处理失败并拒绝该消息，RabbitMQ从队列中删除该消息</li>
-</ul>
-<p>一般reject方式用的较少，除非是消息格式有问题，那就是开发问题了。因此大多数情况下我们需要将消息处理的代码通过<code>try catch</code>机制捕获，消息处理成功时返回ack，处理失败时返回nack.</p>
-<p>由于消息回执的处理代码比较统一，因此SpringAMQP帮我们实现了消息确认。并允许我们通过配置文件设置ACK处理方式，有三种模式：</p>
-<ul>
-<li><code>none</code>：不处理。即消息投递给消费者后立刻ack，消息会立刻从MQ删除。非常不安全，不建议使用</li>
-<li><code>manual</code>：手动模式。需要自己在业务代码中调用api，发送<code>ack</code>或<code>reject</code>，存在业务入侵，但更灵活</li>
-<li><code>auto</code>：自动模式。SpringAMQP利用AOP对我们的消息处理逻辑做了环绕增强，当业务正常执行时则自动返回<code>ack</code>.  当业务出现异常时，根据异常判断返回不同结果：</li>
-<li>如果是<strong>业务异常</strong>，会自动返回<code>nack</code>；</li>
-<li>如果是<strong>消息处理或校验异常</strong>，自动返回<code>reject</code>;</li>
-</ul>
-<p><strong>关键理解：auto ≠ 「自动成功」</strong>。它是 Spring 用 AOP 拿你的方法结果，代替你按 ack/nack 按钮。所以「抛异常」这个动作本身就是「告诉 MQ 我失败了」——这正是重试机制的触发开关。</p>
-<p>通过下面的配置可以修改SpringAMQP的ACK处理方式：</p>
-<pre><code class="language-yaml">spring:
-  rabbitmq:
-    listener:
-      simple:
-        acknowledge-mode: auto   # none / auto / manual
+<p>事务能回滚 ①，但管不住 ②。反过来，① 成功后进程崩溃，② 根本没执行——「钱扣了，通知却没发」，这就是要解决的核心矛盾。</p>
+<h2 id="sec-1">1. 核心思想</h2>
+<blockquote>
+<p><strong>利用本地数据库事务，保证「业务数据」与「消息记录」原子性地一起落盘；</strong><br />
+<strong>再通过 Confirm 闭环 + 定时补偿，保证消息最终一定投递成功。</strong></p>
+</blockquote>
+<p>翻译成大白话：<strong>寄快递前先把单号和包裹拍照存档，没收到签收回执就照着照片重寄，直到签收或转人工。</strong></p>
+<p>它把「发消息」这个<strong>不确定的网络操作</strong>，拆成了：</p>
+<ol>
+<li>「写数据库」这个<strong>确定的本地操作</strong>（事务保证，崩溃也不怕）；</li>
+<li>一个<strong>可重复执行的投递任务</strong>（失败了就再来，直到确认）。</li>
+</ol>
+<p>消息记录落了库，就有了「重发的依据」「重试次数的账本」「人工兜底的现场」。</p>
+<h2 id="sec-2">2. 表设计</h2>
+<pre><code class="language-sql">CREATE TABLE IF NOT EXISTS `local_message` (
+  id              BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+  message_id      VARCHAR(64)  NOT NULL COMMENT '消息唯一标识(=CorrelationData.id)',
+  message_type    VARCHAR(32)  NOT NULL COMMENT '消息类型，如 ORDER_PAID',
+  content         TEXT         NOT NULL COMMENT '消息体JSON(与发到MQ的内容一字不差)',
+  exchange        VARCHAR(64)  NOT NULL COMMENT '目标交换机',
+  routing_key     VARCHAR(64)  NOT NULL COMMENT '目标路由键',
+  status          TINYINT      NOT NULL DEFAULT 0 COMMENT '0发送中 1已确认 2失败 3死信',
+  retry_count     INT          NOT NULL DEFAULT 0 COMMENT '已补偿重试次数',
+  create_time     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  next_retry_time DATETIME     NULL COMMENT '下次允许重试的时间(指数退避)',
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_message_id (message_id),
+  KEY idx_status_next_retry (status, next_retry_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT '本地消息表';
 </code></pre>
-<h2 id="sec-2">2. 失败重试机制</h2>
-<p>当消费者出现异常后，消息会不断requeue（重入队）到队列，再重新发送给消费者。如果消费者再次执行依然出错，消息会再次requeue到队列，再次投递，直到消息处理成功为止。<br />
-极端情况就是消费者一直无法执行成功，那么消息requeue就会无限循环，导致mq的消息处理飙升，带来不必要的压力：</p>
-<p>当然，上述极端情况发生的概率还是非常低的，不过不怕一万就怕万一。为了应对上述情况Spring又提供了消费者失败重试机制：在消费者出现异常时利用本地重试，而不是无限制的requeue到mq队列。</p>
-<pre><code class="language-yaml">spring:
-  rabbitmq:
-    listener:
-      simple:
-        retry:
-          enabled: true # 开启消费者失败重试
-          initial-interval: 1000ms # 初识的失败等待时长为1秒
-          multiplier: 1 # 失败的等待时长倍数，下次等待时长 = multiplier * last-interval
-          max-attempts: 3 # 最大重试次数
-          stateless: true # true无状态；false有状态。如果业务中包含事务，这里改为false
-</code></pre>
-<p>重启consumer服务，重复之前的测试。可以发现：</p>
-<ul>
-<li>消费者在失败后消息没有重新回到MQ无限重新投递，而是在本地重试了3次</li>
-<li>本地重试3次以后，抛出了<code>AmqpRejectAndDontRequeueException</code>异常。查看RabbitMQ控制台，发现消息被删除了，说明最后SpringAMQP返回的是<code>reject</code></li>
-</ul>
-<p>结论：</p>
-<ul>
-<li>开启本地重试时，消息处理过程中抛出异常，不会requeue到队列，而是在消费者本地重试</li>
-<li>重试达到最大次数后，Spring会返回reject，消息会被丢弃</li>
-</ul>
-<p><strong>「本地」重试是什么意思？</strong></p>
-<pre><code>传统无重试配置：消费者抛异常 → nack(requeue=true) → 消息回 MQ 队列头部 → 立即重新投递 → 再抛 …（死循环）
-本地重试：      消费者抛异常 → 消息不出 MQ 的 unacked 状态，在本地线程 sleep 1s 再调一次业务方法
-</code></pre>
-<p><strong>与生产者 retry 的本质区别</strong></p>
+<p>逐个字段说清楚「为什么」：</p>
 <table>
 <thead>
 <tr>
-<th></th>
-<th>生产者 template.retry</th>
-<th>消费者 listener.retry</th>
+<th>字段</th>
+<th>为什么必须存在</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>卡住的是谁</td>
-<td>Tomcat 线程（阻塞 Web 请求）</td>
-<td>消费者本地线程（阻塞的是消费速度，不影响 Web）</td>
+<td><code>message_id</code></td>
+<td><strong>全流程的线索</strong>。发送时作为 <code>CorrelationData.id</code> 传给 MQ，Confirm 回执带回来，靠它反查这条记录改状态。没有它，回执和数据库就断链了</td>
 </tr>
 <tr>
-<td>失败后果</td>
-<td>发送失败，靠本地消息表补偿</td>
-<td>重试耗尽进 error.queue，有 RepublishMessageRecoverer 兜底</td>
+<td><code>content</code></td>
+<td><strong>重发的依据</strong>。Confirm/Return 回调里拿不到原消息，只有库里存了完整 JSON，补偿任务才能原样重发</td>
 </tr>
 <tr>
-<td>雪崩风险</td>
-<td>有（线程池耗尽）</td>
-<td>无（消费线程独立于 Web 线程池）</td>
+<td><code>exchange</code> + <code>routing_key</code></td>
+<td>同上——重发还需要知道「发到哪」</td>
+</tr>
+<tr>
+<td><code>message_type</code></td>
+<td>消息类型分类，用于方便按业务过滤、日志排查或路由到不同的处理逻辑。</td>
+</tr>
+<tr>
+<td><code>status</code></td>
+<td>消息生命周期状态</td>
+</tr>
+<tr>
+<td><code>retry_count</code></td>
+<td>重试的次数。无限重试会打爆 MQ，必须记账、设上限</td>
+</tr>
+<tr>
+<td><code>next_retry_time</code></td>
+<td><strong>指数退避</strong>的落点。MQ 宕机时不能每 30 秒傻傻地撞，间隔要越拉越长</td>
 </tr>
 </tbody>
 </table>
-<h2 id="sec-3">3. 失败处理策略</h2>
-<p>在之前的测试中，本地测试达到最大重试次数后，消息会被丢弃。这在某些对于消息可靠性要求较高的业务场景下，显然不太合适了。<br />
-因此Spring允许我们自定义重试次数耗尽后的消息处理策略，这个策略是由<code>MessageRecovery</code>接口来定义的，它有3个不同实现：</p>
+<p><strong>两个索引是两把刀</strong>：</p>
 <ul>
-<li><code>RejectAndDontRequeueRecoverer</code>：重试耗尽后，直接<code>reject</code>，丢弃消息。默认就是这种方式 （这会导致消息丢失，生产环境极其不推荐！）</li>
-<li><code>ImmediateRequeueMessageRecoverer</code>：重试耗尽后，返回<code>nack</code>，消息重新入队 （这会导致死循环，违背了配置本地重试的初衷，不推荐！）</li>
-<li><code>RepublishMessageRecoverer</code>：重试耗尽后，将失败消息投递到指定的交换机 </li>
+<li><code>uk_message_id</code> 唯一索引：防同一条消息重复落库（业务重试导致 saveMessage 被调两次时直接报错拦截）；</li>
+<li><code>idx_status_next_retry</code> 联合索引：补偿任务每 30 秒执行一次<code>WHERE status IN (0,2) AND next_retry_time &lt; now()</code>，没有它，表大了以后全表扫描拖垮数据库。</li>
 </ul>
-<p>比较优雅的一种处理方案是<code>RepublishMessageRecoverer</code>，失败后将消息投递到一个指定的，专门存放异常消息的队列，后续由人工集中处理。</p>
-<p><img alt="image-20260808160403526" src="images/image-20260808160403526.png" /></p>
-<p><strong>绝对原则：消费者遇到错误时，必须把异常抛出！</strong></p>
-<pre><code class="language-java">@Configuration
-public class ErrorMessageConfig {
+<h2 id="sec-3">3. 正常流程全链路</h2>
+<pre><code>业务方法(如支付)          本地消息表              MQ Broker          Confirm回调
+    │                        │                      │                    │
+    │ ①开启事务 @Transactional│                      │                    │
+    │──saveMessage()───────&gt;│                      │                    │
+    │   INSERT status=0      │                      │                    │
+    │   (业务数据同事务落库)   │                      │                    │
+    │ ②COMMIT ──────────────&gt;│ 记录已持久化✅        │                    │
+    │                        │                      │                    │
+    │ ③afterCommit 钩子触发   │                      │                    │
+    │──send(消息+CorrelationData)───────────────────&gt;│ 消息入队           │
+    │                        │                      │                    │
+    │                        │                      │──basic.ack────────&gt;│
+    │                        │                      │                    │ ④Future完成
+    │                        │&lt;─────UPDATE status=1 CONFIRMED─────────────│
+    │                        │                      │                    │
+    ▼ 正常路径：一次发送，一次确认，闭环完成（约几十毫秒）
+</code></pre>
+<p>记住这条主线，后面所有异常场景都是在主线某个环节「剪一刀」，看补偿怎么接住。</p>
+<p><strong>核心流程分步拆解</strong></p>
+<p><strong>1. 本地数据库事务提交（第 3~7 行）</strong></p>
+<ul>
+<li><strong>操作</strong>：业务方法（如支付）开启事务，在保存业务数据的同时，向<strong>本地消息表</strong>插入一条记录，状态初始化为 <code>0</code>（未发送/发送中）。</li>
+<li><strong>关键</strong>：业务数据和消息记录在<strong>同一个数据库事务</strong>里，要么一起成功，要么一起回滚。</li>
+</ul>
+<p><strong>2. 事务提交后才发 MQ（第 9~10 行）</strong></p>
+<ul>
+<li><strong>操作</strong>：利用 <code>@TransactionalEventListener</code> 或 <code>TransactionSynchronization.afterCommit()</code> 钩子，<strong>等待本地事务完全提交（COMMIT）后</strong>，再调用 MQ 发送消息。</li>
+<li><strong>目的</strong>：保证“发出去的消息，数据库里一定有记录”。如果在事务内直接发 MQ，万一后续数据库回滚了，MQ 消息就已经取消不掉了。</li>
+</ul>
+<p><strong>3. MQ 接收并应答（第 10~12 行）</strong></p>
+<ul>
+<li><strong>操作</strong>：MQ Broker 收到消息并成功入队，异步给生产者返回一个 <code>basic.ack</code>（即 Confirm 确认）。</li>
+</ul>
+<p><strong>4. 更新本地消息状态，形成闭环（第 13~14 行）</strong></p>
+<ul>
+<li><strong>操作</strong>：生产者的 Confirm 回调函数被触发（或者异步 Future 完成），根据携带的 <code>CorrelationData</code>（消息 ID），去更新本地消息表的状态为 <code>1</code>（已确认/发送成功）。</li>
+</ul>
+<h2 id="sec-4">4. 代码实现（四大组件）</h2>
+<p><strong>实现只需要四个角色：</strong></p>
+<pre><code>LocalMessageSender（发送器）      ← 核心，组合了落库/发送/回调/补偿
+CompensationTask（定时任务）      ← 每30秒扫描兜底
+ProducerController（实验入口）    ← 触发各种场景
+MqCallbackConfig（全局Return）    ← 路由失败告警
+</code></pre>
+<pre><code>[ 业务服务 ]
+   │
+   ├─ 1. 开启本地事务 @Transactional
+   │     ├─ 修改业务数据 (如: 扣减余额)
+   │     └─ 插入消息记录到 local_message (status = 0) saveMessage()
+   ├─ 2. 提交本地事务 (此时业务数据和消息记录同时落库)
+   │
+   ├─ 3. afterCommit 钩子触发 -&gt; 异步发送消息到 MQ
+   │
+   ├─ 4. MQ 收到消息，异步返回 Confirm ACK
+   │     └─ 生产者收到 ACK -&gt; 将 local_message 的 status 更新为 1
+   │
+   └─ 5. 【后台定时任务兜底】
+         └─ 扫描 status=0 且已超时的记录 -&gt; 重新发送 -&gt; 达到最大重试次数标记为 3 (死信)
+</code></pre>
+<h3 id="sec-5">1. 落库：saveMessage</h3>
+<p><strong>实体类</strong></p>
+<pre><code class="language-java">@Data
+@TableName(&quot;local_message&quot;)
+public class LocalMessage {
 
-    public static final String ERROR_EXCHANGE = &quot;error.exchange&quot;;
-    public static final String ERROR_QUEUE = &quot;error.queue&quot;;
-    public static final String ERROR_ROUTING_KEY = &quot;error.routing.key&quot;;
+    @TableId(type = IdType.AUTO)
+    private Long id;
 
-    // 1. 声明异常交换机
-    @Bean
-    public DirectExchange errorExchange() {
-        return new DirectExchange(ERROR_EXCHANGE);
+    /** 消息唯一标识（CorrelationData 的 id 与它相同，Confirm 回执靠它反查本表） */
+    private String messageId;
+
+    /** 消息类型 */
+    private String messageType;
+
+    /** 消息体（JSON 字符串，与真正发到 MQ 的内容一字不差） */
+    private String content;
+
+    /** 目标交换机 */
+    private String exchange;
+
+    /** 路由键 */
+    private String routingKey;
+
+    /** 状态：0=发送中(SENDING) 1=已确认(CONFIRMED) 2=失败(FAIL) 3=死信(DEAD) */
+    private Integer status;
+
+    /** 已重试次数 */
+    private Integer retryCount;
+
+    /** 创建时间 */
+    private LocalDateTime createTime;
+
+    /** 下次允许重试的时间（避免密集重试） */
+    private LocalDateTime nextRetryTime;
+}
+
+</code></pre>
+<pre><code class="language-java">public void saveMessage(String messageId, String messageType,
+                            Object payload, String exchange, String routingKey) {
+    //payload就是消息的本体，这个看项目的具体要求
+        try {
+            LocalMessage msg = new LocalMessage();
+            msg.setMessageId(messageId);
+            msg.setMessageType(messageType);
+            // 消息体统一转 JSON 存储（Hutool）—— 与真正发到 MQ 的内容保持一致
+            msg.setContent(JSONUtil.toJsonStr(payload));
+            msg.setExchange(exchange);
+            msg.setRoutingKey(routingKey);
+            msg.setStatus(0); // SENDING
+            msg.setRetryCount(0);
+            msg.setCreateTime(LocalDateTime.now());
+            msg.setNextRetryTime(LocalDateTime.now().plusSeconds(30)); // 30s 未确认才允许补偿
+            localMessageMapper.insert(msg);
+            log.info(&quot;[本地消息表] 落库成功 messageId={} exchange={} routingKey={}&quot;,
+                    messageId, exchange, routingKey);
+        } catch (Exception e) {
+            throw new RuntimeException(&quot;本地消息表落库失败&quot;, e);
+        }
     }
-
-    // 2. 声明异常队列
-    @Bean
-    public Queue errorQueue() {
-        return new Queue(ERROR_QUEUE);
-    }
-
-    // 3. 绑定异常队列和异常交换机
-    @Bean
-    public Binding errorBinding() {
-        return BindingBuilder.bind(errorQueue()).to(errorExchange()).with(ERROR_ROUTING_KEY);
-    }
-
-    // 4. 配置 RepublishMessageRecoverer，覆盖 Spring 默认的丢弃策略
-    @Bean
-    public MessageRecoverer republishMessageRecoverer(RabbitTemplate rabbitTemplate) {
-        // 参数：RabbitTemplate, 目标交换机名称, 目标路由键
-        return new RepublishMessageRecoverer(rabbitTemplate, ERROR_EXCHANGE, ERROR_ROUTING_KEY);
+</code></pre>
+<p>三个细节：</p>
+<ol>
+<li><strong><code>next_retry_time = now + 30s</code></strong>：给正常路径留缓冲。Confirm ack 通常几十毫秒就回来，如果补偿任务扫得太激进，会把「还在路上的消息」误判为失败，造成无谓重发。</li>
+<li><strong>content 存的是「将要发出去的那个对象」序列化后的 JSON</strong>，不是消息的描述或摘要——补偿时要原样重发，存什么就得发什么。</li>
+<li>这个方法<strong>必须</strong>在业务事务内被调用，单独调用毫无可靠性意义。</li>
+</ol>
+<h3 id="sec-6">2. 事务 + 发送时序：sendAfterCommit</h3>
+<p>先看<strong>错误写法</strong>——很多人第一直觉是在事务内直接发：</p>
+<pre><code class="language-java">@Transactional
+public void pay(...) {
+    deductBalance();                    // 业务操作
+    sender.saveMessage(...);            // 落库
+    sender.send(...);                   // ❌ 事务还没提交就发送了！
+}
+</code></pre>
+<p>错在哪？<strong>发送成功 → 之后 COMMIT 失败/回滚</strong>：数据库里业务没发生，但消费者已经收到了消息——「<strong>幽灵消息</strong>」，业务上等于凭空捏造了一笔支付。</p>
+<p>正确写法——注册「事务提交后」钩子：</p>
+<pre><code class="language-java">public void sendAfterCommit(String messageId, Object payload, String exchange, String routingKey) {
+    if (TransactionSynchronizationManager.isSynchronizationActive()) {
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                send(messageId, exchange, routingKey, payload);  // 提交成功才发送
+            }
+        });
+    } else {
+        send(messageId, exchange, routingKey, payload);  // 无事务环境直接发
     }
 }
 </code></pre>
-<p><strong>完整的、健壮的消息消费流程应该是这样的：</strong></p>
+<p>两个半环拼在一起才是完整的：</p>
+<ul>
+<li>落库在事务内 → <strong>业务成功 ⟺ 消息记录一定在</strong>（原子性，解决进程崩溃场景）；</li>
+<li>发送在提交后 → <strong>不会发出业务上不存在的消息</strong>（解决幽灵消息）。</li>
+</ul>
+<p>业务方使用只要三行：</p>
+<pre><code class="language-java">private final LocalMessageSender sender;
+
+    @PostMapping(&quot;/order&quot;)
+    @Transactional(rollbackFor = Exception.class)
+    public String order(@RequestParam(defaultValue = &quot;ORD-1001&quot;) String orderNo) {
+        String messageId = &quot;PAY-&quot; + UUID.randomUUID().toString().replace(&quot;-&quot;, &quot;&quot;).substring(0, 16);
+        Map&lt;String, Object&gt; payload = new HashMap&lt;&gt;();
+        payload.put(&quot;messageId&quot;, messageId);
+        payload.put(&quot;orderNo&quot;, orderNo);
+        payload.put(&quot;payAmount&quot;, 899900);
+
+        // 第 1 步：事务内落库（本方法有 @Transactional，落库与「业务」同生共死）
+        sender.saveMessage(messageId, &quot;ORDER_PAID&quot;, payload,
+                ProducerTopology.ORDER_EXCHANGE, ProducerTopology.ORDER_KEY);
+        // 第 2 步：注册事务提交后自动发送（messageType 落库时已存，发送参数里不再重复）
+        sender.sendAfterCommit(messageId, payload,
+                ProducerTopology.ORDER_EXCHANGE, ProducerTopology.ORDER_KEY);
+        return &quot;下单完成 messageId=&quot; + messageId;
+    }
+</code></pre>
+<h3 id="sec-7">3. 发送 + Confirm 闭环：send</h3>
+<pre><code class="language-java">public void send(String messageId, String exchange, String routingKey, Object payload) {
+    // 1. CorrelationData 的 id = messageId —— Confirm 闭环的关键线索
+    CorrelationData cd = new CorrelationData(messageId);
+
+    // 2. 局部 Confirm 回调（Boot 2.7 用 getFuture().addCallback）
+    cd.getFuture().addCallback(result -&gt; {
+        if (result != null &amp;&amp; result.isAck()) {
+            updateStatus(messageId, 1);   // CONFIRMED，终点
+        } else {
+            updateStatus(messageId, 2);   // FAIL，等补偿任务重发
+        }
+    }, ex -&gt; {
+        updateStatus(messageId, 2);       // Future 异常（连接断开等）也标记失败
+    });
+
+    // 3. 发送时必须携带 cd，否则回调永远不触发
+    rabbitTemplate.convertAndSend(exchange, routingKey, payload, cd);
+}
+</code></pre>
+<pre><code class="language-java">/** 更新本地消息表状态（Confirm 回执按 messageId 反查记录后更新） */
+public void updateStatus(String messageId, int status) {
+    LocalMessage record = localMessageMapper.selectOne(
+            Wrappers.&lt;LocalMessage&gt;lambdaQuery().eq(LocalMessage::getMessageId, messageId));
+    if (record == null) {
+        log.warn(&quot;[本地消息表] 找不到 messageId={} 的记录&quot;, messageId);
+        return;
+    }
+    record.setStatus(status);
+    if (status == 1) {
+        record.setNextRetryTime(null); // 已确认的消息不再参与补偿
+    }
+    localMessageMapper.updateById(record);
+}
+</code></pre>
 <ol>
-<li>消费者收到消息。</li>
-<li>业务处理失败抛出异常。</li>
-<li>Spring 拦截异常，<strong>在本地线程挂起等待</strong>，按配置的递增时间（1s, 2s...）重试。</li>
-<li>重试 3 次仍然失败，Spring 判定此消息彻底无救。</li>
-<li>触发 <code>RepublishMessageRecoverer</code>，Spring 自动将消息投递到 <code>error.queue</code>。</li>
-<li>Spring 给原来的队列发送 <code>ack</code>，将该消息从原队列中删除，防止阻塞。</li>
-<li>运维人员第二天上班，查阅 <code>error.queue</code> 里的死信，修复 Bug 后手动回放处理。</li>
+<li><strong>不带 cd 发送 = 回调永远不触发</strong>——三参重载 <code>convertAndSend(exchange, key, msg)</code> 没有回执通道；</li>
+<li><strong>回调触发 ≠ 发送成功</strong>——要看 <code>result.isAck()</code>，nack 也走这个回调；</li>
+<li><strong>cd.getId() 必须等于本地消息表的 message_id</strong>——回执到达时全靠它反查记录。</li>
 </ol>
-<h2 id="sec-4">4. 业务幂等性</h2>
-<p>何为幂等性？<br />
-<strong>幂等</strong>是一个数学概念，用函数表达式来描述是这样的：<code>f(x) = f(f(x))</code>，例如求绝对值函数。<br />
-在程序开发中，则是指同一个业务，执行一次或多次对业务状态的影响是一致的。例如：</p>
+<h3 id="sec-8">4. 补偿：retrySend + 定时扫描</h3>
+<pre><code class="language-java">/** 扫描条件：状态还没闭环 + 到了允许重试的时间 */
+public List&lt;LocalMessage&gt; findTimeoutUnconfirmed() {
+    return localMessageMapper.selectList(
+        Wrappers.&lt;LocalMessage&gt;lambdaQuery()
+            .in(LocalMessage::getStatus, 0, 2)              // SENDING 或 FAIL
+            .lt(LocalMessage::getNextRetryTime, LocalDateTime.now()));
+}
+
+/** 补偿重发一条：指数退避，最多 3 次，耗尽转 DEAD 人工 */
+   public boolean retrySend(LocalMessage msg) {
+        if (msg.getRetryCount() &gt;= 3) {
+            msg.setStatus(3); // DEAD
+            msg.setNextRetryTime(null);
+            localMessageMapper.updateById(msg);
+            log.error(&quot;[补偿] 消息 {} 重试耗尽，转为死信状态，需人工处理&quot;, msg.getMessageId());
+            return false;
+        }
+        try {
+            Object payload = JSONUtil.parse(msg.getContent());
+            send(msg.getMessageId(), msg.getExchange(), msg.getRoutingKey(), payload);
+            msg.setRetryCount(msg.getRetryCount() + 1);
+            // 指数退避：下次重试时间 = now + 30s * 2^retryCount（30s -&gt; 60s -&gt; 120s）
+            long backoff = 30_000L * (1L &lt;&lt; msg.getRetryCount());
+            msg.setNextRetryTime(LocalDateTime.now().plusNanos(backoff * 1_000_000));
+            localMessageMapper.updateById(msg);
+            log.info(&quot;[补偿] 消息 {} 第 {} 次重发完成&quot;, msg.getMessageId(), msg.getRetryCount());
+            return true;
+        } catch (Exception e) {
+            log.error(&quot;[补偿] 消息 {} 重发失败&quot;, msg.getMessageId(), e);
+            return false;
+        }
+    }
+</code></pre>
+<pre><code class="language-java">@Slf4j
+@Component
+@RequiredArgsConstructor
+public class CompensationTask {
+    private final LocalMessageSender sender;
+
+    /** 每 30 秒扫一次（学习演示用高频；生产一般 1~5 分钟） */
+     @Scheduled(fixedDelay = 30_000)
+    public void compensate() {
+        List&lt;LocalMessage&gt; pending = sender.findTimeoutUnconfirmed();
+        if (pending.isEmpty()) {
+            return;
+        }
+        log.info(&quot;[补偿任务] 发现 {} 条超时未确认消息，开始重发&quot;, pending.size());
+        for (LocalMessage msg : pending) {
+            sender.retrySend(msg);
+        }
+    }
+}
+</code></pre>
+<p>要点拆解：</p>
 <ul>
-<li>根据id删除数据</li>
-<li>查询数据</li>
-<li>新增数据</li>
+<li><strong>扫描条件为什么是 <code>status IN (0,2)</code>？</strong> 0（SENDING）覆盖「ack 丢了/进程崩了/还没来得及发」，2（FAIL）覆盖「收到 nack/发送抛异常」。1（CONFIRMED）已闭环不碰，3（DEAD）等人工不碰。</li>
+<li><strong>为什么按 <code>next_retry_time</code> 过期才扫？</strong> 指数退避的实现就落在这里：每次重发把<code>next_retry_time</code> 推远一倍，MQ 长时间宕机时重试频率自动衰减（30s→60s→120s），不雪上加霜。</li>
+<li><strong>为什么从库里还原 payload 而不是重发内存对象？</strong> 补偿任务通常在另一个线程/另一次进程生命周期里跑，内存对象早没了；库里那份 JSON 才是唯一可信的「原文」。</li>
+<li><strong>重试上限 3 次 + DEAD 状态</strong>：3 次都失败大概率是配置错误/严重故障，机器重试无意义，转人工排查（就像消费端的 error.queue 思路——机器兜到底，人兜最后一步）。</li>
 </ul>
-<p>但数据的更新往往不是幂等的，如果重复执行可能造成不一样的后果。比如：</p>
-<ul>
-<li>取消订单，恢复库存的业务。如果多次恢复就会出现库存重复增加的情况</li>
-<li>退款业务。重复退款对商家而言会有经济损失。</li>
-</ul>
-<p>所以，我们要尽可能避免业务被重复执行。<br />
-然而在实际业务场景中，由于意外经常会出现业务被重复执行的情况，例如：</p>
-<ul>
-<li>页面卡顿时频繁刷新导致表单重复提交</li>
-<li>服务间调用的重试</li>
-<li>MQ消息的重复投递</li>
-</ul>
-<p>我们在用户支付成功后会发送MQ消息到交易服务，修改订单状态为已支付，就可能出现消息重复投递的情况。如果消费者不做判断，很有可能导致消息被消费多次，出现业务故障。<br />
-举例：</p>
-<ol>
-<li>假如用户刚刚支付完成，并且投递消息到交易服务，交易服务更改订单为<strong>已支付</strong>状态。</li>
-<li>由于某种原因，例如网络故障导致生产者没有得到确认，隔了一段时间后<strong>重新投递</strong>给交易服务。</li>
-<li>但是，在新投递的消息被消费之前，用户选择了退款，将订单状态改为了<strong>已退款</strong>状态。</li>
-<li>退款完成后，新投递的消息才被消费，那么订单状态会被再次改为<strong>已支付</strong>。业务异常。</li>
-</ol>
-<p>要实现幂等性，前提是每一条消息都必须有一个<strong>全局唯一的标识（Business ID 或 Message ID）</strong>，比如订单号 <code>orderId</code>。</p>
-<h3 id="sec-5">1. 数据库唯一索引</h3>
-<p>利用关系型数据库（MySQL）的 <code>Unique Key</code> 机制来防重。</p>
-<ul>
-<li><strong>做法：</strong> 建立一张独立的 <code>mq_consumed_record</code>（消息消费记录表），包含一个唯一的 <code>message_id</code> 字段。每次消费消息前，先 <code>INSERT</code> 一条记录。</li>
-<li><strong>效果：</strong> 如果是重复消息，第二次 <code>INSERT</code> 时数据库会报主键冲突异常（<code>DuplicateKeyException</code>）。我们在代码里 catch 住这个异常，直接返回 <code>ack</code> 给 MQ，告诉它“这条消息之前处理过了，当成功算吧”。</li>
-<li><strong>优点：</strong> 简单粗暴，100% 绝对可靠。DB 的终极防线，最推荐</li>
-</ul>
-<h3 id="sec-6">2. Redis 分布式锁</h3>
-<p>如果你的系统并发极高，直接把请求打到 MySQL 会导致数据库扛不住，可以引入 Redis。</p>
-<ul>
-<li><strong>做法：</strong> 消费者收到消息后，拿 <code>orderId</code> 去 Redis 里执行 <code>SETNX</code> (Set if Not eXists) 命令。</li>
-<li><strong>效果：</strong></li>
-<li>如果设置成功，说明是第一次消费，放行去执行真正的业务逻辑。</li>
-<li>如果设置失败，说明已经被别人抢占或者处理过了，直接丢弃（打个日志，给 MQ 发送 <code>ack</code>）。</li>
-<li><strong>注意：</strong> 记得给 Redis 的 Key 设置一个合理的过期时间（比如 24 小时），防止死锁，也节省内存。</li>
-</ul>
-<h3 id="sec-7">3. 状态机 / 乐观锁控制</h3>
-<p>这种方式不需要额外的表或 Redis，直接在业务数据上做文章。</p>
-<ul>
-<li><strong>基于状态机：</strong> 比如订单有状态：<code>1-待支付</code>、<code>2-已支付</code>、<code>3-已发货</code>。当收到“支付成功”的消息时，SQL 这样写： <code>UPDATE order SET status = 2 WHERE id = 100 AND status = 1;</code> 如果是重复的支付消息，由于第一次执行后状态已经变成了 2，第二次执行时 <code>WHERE status = 1</code> 就不成立，更新行数为 0，这就实现了幂等。</li>
-<li><strong>基于版本号 (乐观锁)：</strong> 给表加一个 <code>version</code> 字段。每次更新 <code>version = version + 1 WHERE version = old_version</code>。</li>
-</ul>
-<p><strong>企业级标准处理流程</strong></p>
-<p>在实际开发中，为了兼顾<strong>性能</strong>与<strong>可靠性</strong>，通常会把方案一和方案二结合起来（Redis 挡并发 + MySQL 兜底）：</p>
-<ol>
-<li>消费者收到消息，提取 <code>业务流水号 (bizId)</code>。</li>
-<li>去 Redis 执行 <code>SETNX bizId</code>，如果失败，说明重复，直接 ACK 并返回。</li>
-<li>如果成功，开启数据库事务。</li>
-<li>检查业务表状态（状态机校验）或插入防重表。若发现已处理，直接 ACK 并返回。</li>
-<li><strong>执行核心业务逻辑</strong>（如加积分、扣库存）。</li>
-<li>提交事务。</li>
-<li>如果第 4~6 步发生异常，回滚事务，并<strong>删除 Redis 中的 Key</strong>（很重要，否则这条消息就再也无法重试了），让 Spring 重试机制接管。</li>
-</ol>
-<p><strong>为什么 Redis 挡了还要查库？</strong> Redis 主从切换/宕机重启可能丢数据，MySQL 是最后防线。<br />
-<strong>为什么异常时必须删 Redis key？</strong> 不删的话下次重试时 SETNX 失败，这条消息就永远无法被处理（卡死）。</p>
+<h2 id="sec-9">5. 完整代码</h2>
+<h3 id="sec-10">MqCallbackConfig</h3>
+<pre><code class="language-java">@Slf4j
+@Configuration
+public class MqCallbackConfig {
+
+    /**
+     * 全局 ReturnsCallback
+     * 仅当【消息成功到达交换机，但路由不到任何队列】时触发
+     * （前提：application.yaml 里 publisher-returns: true）
+     */
+    @Bean
+    public SmartInitializingSingleton returnsCallbackInitializer(RabbitTemplate rabbitTemplate,
+                                                                 LocalMessageSender localMessageSender) {
+        return () -&gt; {
+            rabbitTemplate.setReturnsCallback(returned -&gt; {
+                log.error(&quot;【MQ消息路由失败】触发退回机制(Return)!&quot;);
+                log.error(&quot;============== 失败详情 ==============&quot;);
+                log.error(&quot;交换机(Exchange): {}&quot;, returned.getExchange());
+                log.error(&quot;路由键(RoutingKey): {}&quot;, returned.getRoutingKey());
+                log.error(&quot;应答码(ReplyCode): {}&quot;, returned.getReplyCode());
+                log.error(&quot;应答文本(ReplyText): {}&quot;, returned.getReplyText());
+                log.error(&quot;消息内容(Message): {}&quot;, new String(returned.getMessage().getBody()));
+                log.error(&quot;=====================================&quot;);
+
+                // ---- 实战补偿：把本地消息表状态改为 FAIL，交给补偿任务重发 ----
+                // 从退回消息的头里取出发送时的 CorrelationData.id（= 本地消息表的 messageId）
+                String messageId = returned.getMessage().getMessageProperties()
+                        .getHeader(&quot;spring_returned_message_correlation&quot;);
+                if (messageId != null) {
+                    log.error(&quot;[Return补偿] messageId={} 路由失败，本地消息表状态改为 FAIL，等待补偿重发&quot;, messageId);
+                    localMessageSender.updateStatus(messageId, 2);
+                } else {
+                    // 不带 CorrelationData 发送的消息（如纯测试消息）没有线索可改表，只能告警
+                    log.error(&quot;[Return补偿] 该消息未携带 CorrelationData，无法定位本地消息表记录，请人工排查路由配置&quot;);
+                }
+            });
+            log.info(&quot;[MqCallbackConfig] 全局 ReturnsCallback 已挂载（含本地消息表补偿）&quot;);
+        };
+    }
+}
+</code></pre>
+<h3 id="sec-11">ProducerController</h3>
+<pre><code class="language-java">@Slf4j
+@RestController
+@RequiredArgsConstructor
+public class ProducerController {
+
+    private final RabbitTemplate rabbitTemplate;
+    private final LocalMessageSender sender;
+    private final LocalMessageMapper localMessageMapper;
+
+    /**
+     * 【本地消息表全流程】
+     * curl -X POST &quot;http://localhost:8104/order&quot;
+     * 预期（按顺序）：
+     *   1. [本地消息表] 落库成功（事务内，状态 SENDING）
+     *   2. 事务提交后 [MQ] 消息已发送 + [局部Confirm] ack -&gt; 状态 CONFIRMED
+     *   3. [下游stub] 收到订单支付消息
+     */
+    @PostMapping(&quot;/order&quot;)
+    @Transactional(rollbackFor = Exception.class)
+    public String order(@RequestParam(defaultValue = &quot;ORD-1001&quot;) String orderNo) {
+        String messageId = &quot;PAY-&quot; + UUID.randomUUID().toString().replace(&quot;-&quot;, &quot;&quot;).substring(0, 16);
+        Map&lt;String, Object&gt; payload = new HashMap&lt;&gt;();
+        payload.put(&quot;messageId&quot;, messageId);
+        payload.put(&quot;orderNo&quot;, orderNo);
+        payload.put(&quot;payAmount&quot;, 899900);
+
+        // 第 1 步：事务内落库（本方法有 @Transactional，落库与「业务」同生共死）
+        sender.saveMessage(messageId, &quot;ORDER_PAID&quot;, payload,
+                ProducerTopology.ORDER_EXCHANGE, ProducerTopology.ORDER_KEY);
+        // 第 2 步：注册事务提交后自动发送（messageType 落库时已存，发送参数里不再重复）
+        sender.sendAfterCommit(messageId, payload,
+                ProducerTopology.ORDER_EXCHANGE, ProducerTopology.ORDER_KEY);
+        return &quot;下单完成 messageId=&quot; + messageId + &quot;，看控制台 落库-&gt;发送-&gt;ack 全流程&quot;;
+    }
+}
+</code></pre>
+<h3 id="sec-12">LocalMessageSender</h3>
+<pre><code class="language-java">@Slf4j
+@Component
+public class LocalMessageSender {
+
+    private final RabbitTemplate rabbitTemplate;
+    private final LocalMessageMapper localMessageMapper;
+
+    public LocalMessageSender(RabbitTemplate rabbitTemplate,
+                              LocalMessageMapper localMessageMapper) {
+        this.rabbitTemplate = rabbitTemplate;
+        this.localMessageMapper = localMessageMapper;
+    }
+
+    /**
+     * 第一步：在业务事务内调用，把「要发的消息」先存进本地消息表（状态=SENDING）
+     * 必须在 @Transactional 事务里调用，才会和业务数据一起提交/回滚。
+     */
+    public void saveMessage(String messageId, String messageType,
+                            Object payload, String exchange, String routingKey) {
+        try {
+            LocalMessage msg = new LocalMessage();
+            msg.setMessageId(messageId);
+            msg.setMessageType(messageType);
+            // 消息体统一转 JSON 存储（Hutool）—— 与真正发到 MQ 的内容保持一致
+            msg.setContent(JSONUtil.toJsonStr(payload));
+            msg.setExchange(exchange);
+            msg.setRoutingKey(routingKey);
+            msg.setStatus(0); // SENDING
+            msg.setRetryCount(0);
+            msg.setCreateTime(LocalDateTime.now());
+            msg.setNextRetryTime(LocalDateTime.now().plusSeconds(30)); // 30s 未确认才允许补偿
+            localMessageMapper.insert(msg);
+            log.info(&quot;[本地消息表] 落库成功 messageId={} exchange={} routingKey={}&quot;,
+                    messageId, exchange, routingKey);
+        } catch (Exception e) {
+            throw new RuntimeException(&quot;本地消息表落库失败&quot;, e);
+        }
+    }
+
+    /**
+     * 第二步：真正发送消息（应在事务提交后调用，见 sendAfterCommit）
+     *
+     * 【CorrelationData 的 id = messageId】是 Confirm 闭环的关键（笔记 §3.3.2 局部 ConfirmCallback）：
+     * MQ 返回回执时，靠这个 id 反查本地消息表并更新状态。
+     */
+    public void send(String messageId, String exchange, String routingKey, Object payload) {
+        // 1. 创建 CorrelationData，id 用消息唯一标识
+        CorrelationData cd = new CorrelationData(messageId);
+
+        // 2. 局部 ConfirmCallback（Boot 2.7 的 getFuture() 返回 ListenableFuture，用 addCallback）
+        cd.getFuture().addCallback(result -&gt; {
+            if (result != null &amp;&amp; result.isAck()) {
+                log.info(&quot;[局部Confirm] 收到 ack, messageId={}&quot;, messageId);
+                updateStatus(messageId, 1); // CONFIRMED
+            } else {
+                String reason = result == null ? &quot;unknown&quot; : result.getReason();
+                log.error(&quot;[局部Confirm] 收到 nack, messageId={}, reason={}&quot;, messageId, reason);
+                updateStatus(messageId, 2); // FAIL，等补偿任务重发
+            }
+        }, ex -&gt; {
+            log.error(&quot;[局部Confirm] Future 异常, messageId={}&quot;, messageId, ex);
+            updateStatus(messageId, 2); // FAIL
+        });
+
+        // 3. 发送消息（携带 cd；JSON 转换器自动把对象转 JSON）
+        rabbitTemplate.convertAndSend(exchange, routingKey, payload, cd);
+        log.info(&quot;[MQ] 消息已发送 exchange={} routingKey={} messageId={}&quot;, exchange, routingKey, messageId);
+    }
+
+    /**
+     * 便捷方法：注册「事务提交后再发送」的钩子。
+     * 【为什么不在事务里直接发？】事务最终回滚的话，消费者会收到「业务根本没发生」的幽灵消息。
+     */
+    public void sendAfterCommit(String messageId,
+                                Object payload, String exchange, String routingKey) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    send(messageId, exchange, routingKey, payload);
+                }
+            });
+        } else {
+            send(messageId, exchange, routingKey, payload);
+        }
+    }
+
+    /** 更新本地消息表状态（Confirm 回执按 messageId 反查记录后更新） */
+    public void updateStatus(String messageId, int status) {
+        LocalMessage record = localMessageMapper.selectOne(
+                Wrappers.&lt;LocalMessage&gt;lambdaQuery().eq(LocalMessage::getMessageId, messageId));
+        if (record == null) {
+            log.warn(&quot;[本地消息表] 找不到 messageId={} 的记录&quot;, messageId);
+            return;
+        }
+        record.setStatus(status);
+        if (status == 1) {
+            record.setNextRetryTime(null); // 已确认的消息不再参与补偿
+        }
+        localMessageMapper.updateById(record);
+    }
+
+    /** 查询超时未确认的消息（补偿任务用） */
+    public java.util.List&lt;LocalMessage&gt; findTimeoutUnconfirmed() {
+        return localMessageMapper.selectList(
+                Wrappers.&lt;LocalMessage&gt;lambdaQuery()
+                        .in(LocalMessage::getStatus, 0, 2)   // SENDING 或 FAIL
+                        .lt(LocalMessage::getNextRetryTime, LocalDateTime.now()));
+    }
+
+    /** 补偿重发一条消息（指数退避，最多 3 次，耗尽转 DEAD） */
+    public boolean retrySend(LocalMessage msg) {
+        if (msg.getRetryCount() &gt;= 3) {
+            msg.setStatus(3); // DEAD
+            msg.setNextRetryTime(null);
+            localMessageMapper.updateById(msg);
+            log.error(&quot;[补偿] 消息 {} 重试耗尽，转为死信状态，需人工处理&quot;, msg.getMessageId());
+            return false;
+        }
+        try {
+            Object payload = JSONUtil.parse(msg.getContent());
+            send(msg.getMessageId(), msg.getExchange(), msg.getRoutingKey(), payload);
+            msg.setRetryCount(msg.getRetryCount() + 1);
+            // 指数退避：下次重试时间 = now + 30s * 2^retryCount（30s -&gt; 60s -&gt; 120s）
+            long backoff = 30_000L * (1L &lt;&lt; msg.getRetryCount());
+            msg.setNextRetryTime(LocalDateTime.now().plusNanos(backoff * 1_000_000));
+            localMessageMapper.updateById(msg);
+            log.info(&quot;[补偿] 消息 {} 第 {} 次重发完成&quot;, msg.getMessageId(), msg.getRetryCount());
+            return true;
+        } catch (Exception e) {
+            log.error(&quot;[补偿] 消息 {} 重发失败&quot;, msg.getMessageId(), e);
+            return false;
+        }
+    }
+}
+</code></pre>
+<h3 id="sec-13">CompensationTask</h3>
+<pre><code class="language-java">@Slf4j
+@Component
+@RequiredArgsConstructor
+public class CompensationTask {
+
+    private final LocalMessageSender sender;
+
+    /** 每 30 秒扫一次（学习演示用高频；生产一般 1~5 分钟） */
+    @Scheduled(fixedDelay = 30_000)
+    public void compensate() {
+        List&lt;LocalMessage&gt; pending = sender.findTimeoutUnconfirmed();
+        if (pending.isEmpty()) {
+            return;
+        }
+        log.info(&quot;[补偿任务] 发现 {} 条超时未确认消息，开始重发&quot;, pending.size());
+        for (LocalMessage msg : pending) {
+            sender.retrySend(msg);
+        }
+    }
+}
+</code></pre>
+<h2 id="sec-14">6. 异常场景</h2>
+<p><strong>场景一：消息还没发出去，进程崩了</strong></p>
+<pre><code>时间线：saveMessage 落库(status=0) → COMMIT → ✖ 进程崩溃（send 从未执行）
+恢复：进程重启 → 30 秒后补偿任务扫描 → status=0 且 next_retry_time 已过期 → 重发 → ack → status=1
+</code></pre>
+<p>消息记录跟着业务事务一起落了盘，崩溃杀不掉它——<strong>这就是「先落库」的意义</strong>。</p>
+<p><strong>场景二：ack 在网络中丢了</strong></p>
+<pre><code>时间线：send 发出 → MQ 收到入队 → ack 丢失 → 生产者这边 status 停在 0
+恢复：补偿任务 30 秒后扫描 → 误判为「没送到」→ 重发 → MQ 会收到两遍
+</code></pre>
+<p>注意：<strong>系统「不知道」这是误判，也不可能知道</strong>——ack 丢了和没送到，在生产者视角完全一样。所以必然产生重复投递，这正是「消费端必须幂等」的根本原因。</p>
+<p><strong>场景三：MQ 收到但返回 nack（交换机内部异常）</strong></p>
+<pre><code>时间线：send → nack 回执 → Future 回调立即触发 → status=2（不用等扫描）
+恢复：补偿任务扫到 status=2 → 重发
+</code></pre>
+<p>局部 Confirm 回调的价值：把「感知失败」从「最慢 30 秒（定时扫描）」提前到「毫秒级」，<br />
+但<strong>无论多快感知，挽回动作都只有一种——从库里拿原文重发</strong>。</p>
+<p><strong>场景四：路由键写错（Return 场景）</strong></p>
+<pre><code>时间线：send → 交换机收到但路由不到队列 → Return 退回（同时 ack=true）
+</code></pre>
+<p>这个场景 Confirm 会给 <strong>ack</strong>（消息确实到达交换机了），status 会变成 1——<br />
+<strong>本地消息表管不到路由失败</strong>！它由 Return 回调负责：全局 ReturnsCallback 打日志告警，<br />
+生产上还应在回调里把对应 messageId 标记为 FAIL，交给补偿链路。</p>
+<blockquote>
+<p>三个回调各管一段：<strong>Return 管路由、Confirm 管送达、本地消息表管最终一致</strong>，谁也替代不了谁。</p>
+</blockquote>
+<h2 id="sec-15">7. 状态机全景与人工兜底</h2>
+<pre><code>                    ┌─────────────────────────────────────────┐
+                    │  0 SENDING（落库后的初始状态）              │
+                    └────┬────────────────────┬───────────────┘
+                  ack ✓  │                    │ nack / 发送异常 / 30s 超时
+                         ▼                    ▼
+              ┌────────────────┐    ┌──────────────────────────┐
+              │ 1 CONFIRMED ✅ │    │ 2 FAIL（等补偿扫描）        │
+              │   (终点)       │    └────┬─────────────────────┘
+              └────────────────┘         │ 补偿重发（retryCount+1，退避30s→60s→120s）
+                                         │ 成功 → 1 / 依旧失败 → 保持2
+                                         ▼ retryCount ≥ 3
+                              ┌────────────────────┐
+                              │ 3 DEAD（转人工）      │
+                              │  修复后可手动重置状态  │
+                              └────────────────────┘
+</code></pre>
+<p>DEAD 不是垃圾箱，是<strong>人工处理队列</strong>：故障修复后，把记录的 status 改回 2（或直接调重发接口），消息还能被再次投出。本地消息表让「人」成为可靠性的最后一环，而不是让消息凭空消失。</p>
+<h2 id="sec-16">8. 补偿必然导致重复投递</h2>
+<p>回到场景二：你<strong>永远无法</strong>区分「MQ 没收到」和「MQ 收到了但 ack 丢了」。补偿任务只能盲目重发——这是「宁可重复、不可丢失」的主动选择。</p>
+<p>由此得出全篇最重要的公式：</p>
+<blockquote>
+<p><strong>发送端「至少一次」（At Least Once） + 消费端「幂等」 = 业务上「恰好一次」（Effectively Once）</strong></p>
+</blockquote>
+<p>这两层是<strong>配套工程</strong>，缺一不可：</p>
+<table>
+<thead>
+<tr>
+<th>组合</th>
+<th>结果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>只有本地消息表（至少一次）</td>
+<td>消息重复，积分加两次、短信发两条</td>
+</tr>
+<tr>
+<td>只有消费端幂等（不做可靠发送）</td>
+<td>消息丢了就是丢了，幂等无从谈起</td>
+</tr>
+<tr>
+<td>两者结合</td>
+<td>丢不了 + 不会重复 = 业务正确 ✅</td>
+</tr>
+</tbody>
+</table>
+<p>所以看到本地消息表的代码时，请同时检查消费端有没有幂等设计（Redis SETNX + 唯一索引）。</p>
   </article>
-  <div class="pn"><a class="note" href="4.html">← 上一篇：4. 生产者的可靠性</a><a class="note" href="6.html">下一篇：6. 延迟消息 →</a></div>
+  <div class="pn"><a class="note" href="4.html">← 上一篇：4. 生产者的可靠性</a><a class="note" href="6.html">下一篇：6. 消费者的可靠性 →</a></div>
 </div>
 </div>
-<footer class="page-foot"><span>mq-note / 5.消费者的可靠性.md</span><span>MQ 实验台 · 静态渲染</span></footer>
+<footer class="page-foot"><span>mq-note / 5.本地消息表.md</span><span>MQ 实验台 · 静态渲染</span></footer>
 <script>
 (function(){
   var links=[].slice.call(document.querySelectorAll('.toc a[href^="#"]'));

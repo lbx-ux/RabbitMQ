@@ -11,7 +11,7 @@ import java.io.IOException;
 import java.util.Map;
 
 /**
- * 死信交换机演示 —— 笔记 6.延迟消息 §1「结合手动确认的具体工作流程」五步全流程
+ * 死信交换机演示 —— 笔记 7.延迟消息 §1「结合手动确认的具体工作流程」五步全流程
  *
  * 【五步对照】（application.yaml 已设 acknowledge-mode: manual）
  *   1. 消息推送与接收：Broker 把 normal.queue 的消息推给消费者，状态 Unacked   -> listenNormal 收到

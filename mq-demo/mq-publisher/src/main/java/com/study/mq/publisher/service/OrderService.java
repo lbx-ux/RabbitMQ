@@ -23,7 +23,7 @@ import java.util.UUID;
  * 订单服务 —— 下单、超时取消、退款
  *
  * 演示知识点：
- *   - 延迟消息「插件方案」：下单时发一条 10 秒后投递的超时检查消息（笔记 6.延迟消息）
+ *   - 延迟消息「插件方案」：下单时发一条 10 秒后投递的超时检查消息（笔记 7.延迟消息）
  *   - 延迟消息「TTL+DLX 方案」：同时发一条到 TTL 队列（两条链路并存，方便对比）
  *   - 状态机幂等：超时取消/退款都用「UPDATE ... WHERE status=旧状态」防重复执行
  */
@@ -53,7 +53,7 @@ public class OrderService {
             throw new IllegalStateException("库存不足, 剩余: " + product.getStock());
         }
 
-        // 2. 扣库存（下单即锁定库存，笔记 6.延迟消息 开头描述的电商做法）
+        // 2. 扣库存（下单即锁定库存，笔记 7.延迟消息 开头描述的电商做法）
         product.setStock(product.getStock() - count);
         productMapper.updateById(product);
 
@@ -81,7 +81,7 @@ public class OrderService {
      * 插件方案发送延迟消息
      *
      * 关键点：通过 MessagePostProcessor 给消息设置 x-delay 头（毫秒）。
-     * 延迟交换机看到 x-delay 后会暂存消息，到期才投递 —— 笔记 6.延迟消息 §2.2.3「发送延迟消息」的写法。
+     * 延迟交换机看到 x-delay 后会暂存消息，到期才投递 —— 笔记 7.延迟消息 §2.2.3「发送延迟消息」的写法。
      */
     private void sendDelayMessageByPlugin(Order order) {
         OrderTimeoutMessage msg = OrderTimeoutMessage.builder()
@@ -122,7 +122,7 @@ public class OrderService {
     /**
      * 超时检查（由 consumer 的两个延迟消费者调用，本服务也暴露给补偿场景）
      *
-     * 【状态机幂等】（笔记 5.消费者的可靠性 §4.3 状态机）：
+     * 【状态机幂等】（笔记 6.消费者的可靠性 §4.3 状态机）：
      *   UPDATE orders SET status=2 WHERE order_no=? AND status=0
      *   - 若订单已支付(status=1)：影响行数 0，直接跳过 —— 不会把已支付订单取消掉！
      *   - 若已被取消过（重复消息）：影响行数 0，也不会重复释放库存。
@@ -143,7 +143,7 @@ public class OrderService {
     }
 
     /**
-     * 退款：只有已支付的订单能退（状态机防重复退款 —— 笔记 5.消费者的可靠性 §4 开头的经典反例）
+     * 退款：只有已支付的订单能退（状态机防重复退款 —— 笔记 6.消费者的可靠性 §4 开头的经典反例）
      * 退款后发 pay.refund 消息，积分服务（绑定 pay.*）会收到并扣回积分
      */
     @Transactional(rollbackFor = Exception.class)

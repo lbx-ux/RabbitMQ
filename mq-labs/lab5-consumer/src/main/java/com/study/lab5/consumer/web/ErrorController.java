@@ -21,7 +21,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 错误消息管理接口 —— 对应笔记 5.消费者的可靠性 §3 失败处理的人工兜底环节
+ * 错误消息管理接口 —— 对应笔记 6.消费者的可靠性 §3 失败处理的人工兜底环节
  *
  * 【为什么需要人工重放】
  *  RepublishMessageRecoverer 转发到 error.queue 的消息是「重试 3 次都失败」的消息，

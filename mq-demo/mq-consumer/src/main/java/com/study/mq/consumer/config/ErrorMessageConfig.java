@@ -13,7 +13,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * 消费失败兜底配置 —— 对应笔记 5.消费者的可靠性 §3 失败处理策略（原文代码，教学保留）
+ * 消费失败兜底配置 —— 对应笔记 6.消费者的可靠性 §3 失败处理策略（原文代码，教学保留）
  *
  * 【背景】
  *  消费者本地重试（application.yaml 的 listener.simple.retry）耗尽后，Spring 默认策略是
@@ -21,7 +21,7 @@ import org.springframework.context.annotation.Configuration;
  *  对可靠性要求高的业务这不可接受 —— 所以用 RepublishMessageRecoverer 覆盖默认策略：
  *  把「重试耗尽」的消息转发到专门的异常交换机/队列，由人工集中处理。
  *
- * 【三种 MessageRecoverer 对比】（笔记 5.消费者的可靠性 §3）
+ * 【三种 MessageRecoverer 对比】（笔记 6.消费者的可靠性 §3）
  *  RejectAndDontRequeueRecoverer     重试耗尽后 reject 丢弃          —— 默认，生产别用！
  *  ImmediateRequeueMessageRecoverer  重试耗尽后 nack 重新入队        —— 会死循环，别用！
  *  RepublishMessageRecoverer         重试耗尽后转发到指定交换机      —— 推荐 ✔（本类配置）
@@ -33,7 +33,7 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class ErrorMessageConfig {
 
-    // 常量从 MqConstants 引用，此处保留笔记 5.消费者的可靠性 §3 原文的公共常量风格，便于对照
+    // 常量从 MqConstants 引用，此处保留笔记 6.消费者的可靠性 §3 原文的公共常量风格，便于对照
     public static final String ERROR_EXCHANGE = MqConstants.ERROR_EXCHANGE;
     public static final String ERROR_QUEUE = MqConstants.ERROR_QUEUE;
     public static final String ERROR_ROUTING_KEY = MqConstants.ERROR_ROUTING_KEY;

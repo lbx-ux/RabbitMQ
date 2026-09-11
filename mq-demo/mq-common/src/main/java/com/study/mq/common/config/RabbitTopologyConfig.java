@@ -99,7 +99,7 @@ public class RabbitTopologyConfig {
     }
 
     // =====================================================================
-    // 二、延迟消息【插件方案】：x-delayed-message 类型交换机（笔记 6.延迟消息 §2.2 DelayExchange插件）
+    // 二、延迟消息【插件方案】：x-delayed-message 类型交换机（笔记 7.延迟消息 §2.2 DelayExchange插件）
     // =====================================================================
 
     /**
@@ -110,7 +110,7 @@ public class RabbitTopologyConfig {
      *
      * 注意：CustomExchange 是因为 Spring AMQP 没有内置 x-delayed-message 类型，
      *      需要手动指定类型和参数 {"x-delayed-type": "direct"}（表示内部按 direct 规则路由）。
-     *      如果你用注解方式声明，直接 @Exchange(name=..., delayed="true") 即可（笔记 6.延迟消息 §2.2 有注解写法）。
+     *      如果你用注解方式声明，直接 @Exchange(name=..., delayed="true") 即可（笔记 7.延迟消息 §2.2 有注解写法）。
      */
     @Bean
     public CustomExchange orderDelayExchange() {
@@ -126,7 +126,7 @@ public class RabbitTopologyConfig {
         return QueueBuilder.durable(MqConstants.ORDER_DELAY_QUEUE).build();
     }
 
-    /** 绑定延迟队列（CustomExchange 是泛型绑定，需要 noargs() 收尾，与笔记 6.延迟消息 §2.2 delayQueueBinding() 写法一致） */
+    /** 绑定延迟队列（CustomExchange 是泛型绑定，需要 noargs() 收尾，与笔记 7.延迟消息 §2.2 delayQueueBinding() 写法一致） */
     @Bean
     public Binding orderDelayBinding() {
         return BindingBuilder.bind(orderDelayQueue())
@@ -136,7 +136,7 @@ public class RabbitTopologyConfig {
     }
 
     // =====================================================================
-    // 三、延迟消息【TTL + 死信交换机方案】（笔记 6.延迟消息 §2.1 DLX + TTL，死信交换机见 §1）
+    // 三、延迟消息【TTL + 死信交换机方案】（笔记 7.延迟消息 §2.1 DLX + TTL，死信交换机见 §1）
     // =====================================================================
     //  插件方案 vs TTL+DLX 方案对比：
     //  - 插件方案：延迟时间写在【消息】上，每条消息可以不同延迟，且不受队头阻塞影响（推荐）

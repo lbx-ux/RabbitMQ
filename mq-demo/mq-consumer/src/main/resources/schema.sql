@@ -2,7 +2,7 @@
 -- mq_demo 库表结构（消费者侧）
 -- =====================================================================
 
--- 消息消费记录表：幂等方案一「数据库唯一索引」的载体（笔记 5.消费者的可靠性 §4.1）
+-- 消息消费记录表：幂等方案一「数据库唯一索引」的载体（笔记 6.消费者的可靠性 §4.1）
 CREATE TABLE IF NOT EXISTS `consumed_message` (
     `id`           BIGINT      NOT NULL AUTO_INCREMENT COMMENT '主键',
     `message_id`   VARCHAR(64) NOT NULL COMMENT '消息唯一标识',

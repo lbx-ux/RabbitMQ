@@ -22,7 +22,7 @@ import org.springframework.stereotype.Component;
  *
  * 【幂等性】
  *  订单更新走 mapper.markPaid()：UPDATE orders SET status=1 WHERE order_no=? AND status=0
- *  重复消息第二次执行影响行数为 0（状态机天然幂等），无需额外防重 —— 笔记 5.消费者的可靠性 §4.3 状态机。
+ *  重复消息第二次执行影响行数为 0（状态机天然幂等），无需额外防重 —— 笔记 6.消费者的可靠性 §4.3 状态机。
  *  这里不需要调用 IdempotentService，就是为了和积分服务形成「两种幂等实现」的对照学习。
  */
 @Slf4j
@@ -76,7 +76,7 @@ public class TradeListener {
             conn.disconnect();
             return code == 200 ? 1 : 0;
         } catch (Exception e) {
-            // 调用失败必须抛异常！让 Spring 消费重试机制接管（笔记 5.消费者的可靠性 §3「绝对原则」）
+            // 调用失败必须抛异常！让 Spring 消费重试机制接管（笔记 6.消费者的可靠性 §3「绝对原则」）
             throw new RuntimeException("交易服务更新订单失败, orderNo=" + orderNo, e);
         }
     }

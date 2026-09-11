@@ -28,7 +28,7 @@
 <div class="md-wrap">
   <div class="md-head">
     <h2>《4. 生产者的可靠性》</h2>
-    <p class="fine">重试 · Confirm/Return · 本地消息表</p>
+    <p class="fine">重试 · Confirm/Return</p>
   </div>
   <article class="md-body">
 <h1>生产者的可靠性</h1>
@@ -254,6 +254,10 @@ public class OrderPublisher {
 </code></pre>
 <p><strong>核心注意事项</strong></p>
 <ul>
+<li><strong>【先看这条】发送时带了 CorrelationData 就不用手动注入头！</strong> Spring AMQP 在发送时会自动把<br />
+<code>cd.getId()</code> 写进 <code>spring_returned_message_correlation</code> 头，Return 回调直接读即可。<br />
+  上面 <code>MessagePostProcessor</code> 手动 setHeader 的写法，只适用于「不带 CorrelationData 发送」的场景。<br />
+  由于 Confirm 闭环本来就要求携带 cd（§3.3.2），生产上统一走 cd 即可，手动注入是冗余代码。</li>
 <li><strong><code>mandatory</code> 参数必传</strong>：如果不配置 <code>spring.rabbitmq.template.mandatory=true</code>，即便写了 <code>ReturnsCallback</code> 代码，路由失败时也<strong>永远不会被触发</strong>。</li>
 <li><strong>唯一性约束</strong>：每一个 <code>RabbitTemplate</code> 实例只能注册<strong>一个</strong> <code>ReturnsCallback</code>。如果项目中多处设置，后设置的会覆盖前面的。</li>
 <li><strong>异步线程隔离</strong>：<code>ReturnsCallback</code> 的回调方法是在 RabbitMQ 的 NIO 监听线程中执行的，<strong>千万不要在回调函数内做同步阻塞操作</strong>（如大 SQL 查询、远程 HTTP 调用），必须通过 <code>@Async</code> 或自建线程池异步处理补偿逻辑。</li>
@@ -450,7 +454,7 @@ public void compensate() {
 <code>0/2 --nack/超时--&gt; 补偿重发(最多3次,30s×2ⁿ) --耗尽--&gt; 3 DEAD 转人工</code>。</p>
 <p><strong>必须想通的一点——补偿必然导致重复投递</strong>：你无法区分「MQ 没收到」和「MQ 收到了但 ack 丢了」，所以补偿任务会盲目重发。<strong>发送端「至少一次」+ 消费端幂等 = 业务上「恰好一次」</strong>，这两层是配套工程，</p>
   </article>
-  <div class="pn"><a class="note" href="3.html">← 上一篇：3. 数据持久化</a><a class="note" href="5.html">下一篇：5. 消费者的可靠性 →</a></div>
+  <div class="pn"><a class="note" href="3.html">← 上一篇：3. 数据持久化</a><a class="note" href="5.html">下一篇：5. 本地消息表 →</a></div>
 </div>
 </div>
 <footer class="page-foot"><span>mq-note / 4.生产者的可靠性.md</span><span>MQ 实验台 · 静态渲染</span></footer>

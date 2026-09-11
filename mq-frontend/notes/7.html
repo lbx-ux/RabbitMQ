@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>延迟消息 · MQ 实验台</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" media="print" onload="this.media='all'"
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true"></span>
+    <div>
+      <h1>MQ 实验台</h1>
+    </div>
+  </div>
+  <nav class="nav" aria-label="主导航"><a href="../index.html">总览</a><a href="../trade.html">业务链路</a><a href="../reliability.html">消息可靠性</a><a href="../consume.html">消费结果</a><a href="../notes.html" class="on">学习笔记</a></nav>
+  <div class="topbar-side">
+    <a class="mgmt" href="http://192.168.146.130:15672" target="_blank" rel="noopener">管理台</a>
+  </div>
+</header>
+<div class="note-layout">
+<aside class="toc" aria-label="目录"><div class="toc-title">目录</div><a class="lv2" href="#sec-1">1. DLX + TTL</a><a class="lv2" href="#sec-2">2. DelayExchange插件</a><a class="lv3" href="#sec-3">1. 部署</a><a class="lv3" href="#sec-4">2. 声明延迟交换机</a><a class="lv3" href="#sec-5">3. 发送延迟消息</a><a class="lv2" href="#sec-6">3. 对比</a></aside>
+<div class="md-wrap">
+  <div class="md-head">
+    <h2>《7. 延迟消息》</h2>
+    <p class="fine">死信交换机 · 延迟插件</p>
+  </div>
+  <article class="md-body">
+<h1>1. 死信交换机</h1>
+<p>死信交换机（Dead Letter Exchange, DLX）用于<strong>接收处理失败或超时的异常消息</strong>。当消费者配合手动确认并拒签消息（<code>requeue = false</code>）时，Broker 会自动将该消息转发至绑定的 DLX 并写入死信队列（DLQ），避免消息丢失或陷入无休止的重试死循环。</p>
+<p><strong>触发死信的三种场景</strong></p>
+<ol>
+<li><strong>拒签不重排</strong>：消费者调用 <code>basicNack</code> 或 <code>basicReject</code>，并将 <code>requeue</code> 设为 <code>false</code>。</li>
+<li><strong>消息 TTL 过期</strong>：消息在队列中存活时间超过了设置的 TTL（Time To Live）。</li>
+<li><strong>队列达到最大长度</strong>：队列积压达到上限（<code>x-max-length</code>），最早入队的消息被剔除。</li>
+</ol>
+<p><strong>DLX 核心配置</strong></p>
+<p>配置死信机制的关键是在声明<strong>正常队列</strong>时，通过队列参数指定 <code>x-dead-letter-exchange</code> 和 <code>x-dead-letter-routing-key</code>。</p>
+<pre><code class="language-java">@Configuration
+public class RabbitConfig {
+
+    // 1. 声明死信 Exchange 与 死信 Queue
+    @Bean
+    public DirectExchange deadLetterExchange() {
+        return new DirectExchange(&quot;dlx.exchange&quot;);
+    }
+
+    @Bean
+    public Queue deadLetterQueue() {
+        return new Queue(&quot;dlx.queue&quot;);
+    }
+
+    @Bean
+    public Binding deadLetterBinding() {
+        return BindingBuilder.bind(deadLetterQueue()).to(deadLetterExchange()).with(&quot;dlx.routing.key&quot;);
+    }
+
+    // 2. 声明正常 Queue 并关联死信参数
+    @Bean
+    public Queue normalQueue() {
+        Map&lt;String, Object&gt; args = new HashMap&lt;&gt;();
+        args.put(&quot;x-dead-letter-exchange&quot;, &quot;dlx.exchange&quot;);         // 指定死信交换机
+        args.put(&quot;x-dead-letter-routing-key&quot;, &quot;dlx.routing.key&quot;);    // 指定死信路由键
+
+        return new Queue(&quot;normal.queue&quot;, true, false, false, args);
+    }
+}
+</code></pre>
+<p><strong>结合手动确认的具体工作流程</strong></p>
+<p><strong>1.消息推送与接收：</strong>正常队列。</p>
+<p>Broker 从 <code>normal.queue</code> 将消息推送给消费者，通道内部将该消息状态置为 <code>Unacked</code>。</p>
+<p><strong>2.业务逻辑处理失败：</strong>异常捕获。</p>
+<p>消费者执行业务逻辑，由于数据校验失败、三方接口挂掉或代码异常，触发 <code>try-catch</code> 捕获。</p>
+<p><strong>3.拒签且禁止重入队：</strong>basicNack。</p>
+<p>消费者在 <code>catch</code> 块中调用 <code>channel.basicNack(deliveryTag, false, false)</code>。将最后一个参数 <code>requeue</code> 设置为 <code>false</code> 是触发死信机制的关键步骤。</p>
+<p><strong>4.Broker 路由死信：</strong>DLX 触发。</p>
+<p>Broker 收到拒签信号，识别到 <code>requeue=false</code>，查验当前队列配有 <code>x-dead-letter-exchange</code>，随后将消息打包投递给 <code>dlx.exchange</code>。</p>
+<p><strong>5.死信归档与二次处理：</strong>DLQ 存储。</p>
+<p>死信交换机根据 <code>dlx.routing.key</code> 将消息写入 <code>dlx.queue</code>。专用的死信监听器或告警服务读取该队列，实现人工排查、日志落盘或延迟重试。</p>
+<p><strong>死信消息的关键特征（x-death 请求头）</strong></p>
+<p>消息进入死信队列后，RabbitMQ 会自动在消息 Header 中注入一个名为 <code>x-death</code> 的数组，里面包含了异常分析的关键元数据：</p>
+<ul>
+<li><strong><code>reason</code></strong>：死信原因（<code>rejected</code> 拒签、<code>expired</code> 过期、<code>maxlen</code> 队列超长）。</li>
+<li><strong><code>queue</code></strong>：消息死亡前所在的原始队列名称。</li>
+<li><strong><code>time</code> / <code>count</code></strong>：进入死信的时间戳以及该消息进入死信的次数。</li>
+</ul>
+<h1>2. 延迟消息</h1>
+<p><strong>延迟消息：生产者发送消息时指定一个时间，消费者不会立刻收到消息，而是在指定消息之后才收到消息</strong></p>
+<p><strong>延迟任务：设置在一定时间之后才执行的任务</strong></p>
+<p>在电商的支付业务中，对于一些库存有限的商品，为了更好的用户体验，通常都会在用户下单时立刻扣减商品库存。例如电影院购票、高铁购票，下单后就会锁定座位资源，其他人无法重复购买。</p>
+<p>但是这样就存在一个问题，假如用户下单后一直不付款，就会一直占有库存资源，导致其他客户无法正常交易，最终导致商户利益受损！</p>
+<p>因此，电商中通常的做法就是：<strong>对于超过一定时间未支付的订单，应该立刻取消订单并释放占用的库存</strong>。</p>
+<p>例如，订单支付超时时间为30分钟，则我们应该在用户下单后的第30分钟检查订单支付状态，如果发现未支付，应该立刻取消订单，释放库存。</p>
+<p>但问题来了：如何才能准确的实现在下单后第30分钟去检查支付状态呢？</p>
+<p>像这种在一段时间以后才执行的任务，我们称之为<strong>延迟任务</strong>，而要实现延迟任务，最简单的方案就是利用MQ的延迟消息了。</p>
+<p>在RabbitMQ中实现延迟消息也有两种方案：</p>
+<ul>
+<li>死信交换机+TTL</li>
+<li>延迟消息插件</li>
+</ul>
+<h2 id="sec-1">1. DLX + TTL</h2>
+<p>死信交换机实现延迟消息的核心机制是 <strong>“TTL（生存时间） + DLX（死信交换机）”</strong> 的组合拳：把消息发送到一个<strong>没有消费者监听的暂存队列</strong>中，并设置过期时间；当消息超时过期后会自动变成“死信”，被 Broker 转发到真正的业务队列供消费者消费。</p>
+<p><strong>1.投递至暂存队列：</strong>消息入队并开始计时。</p>
+<p>生产者将消息发送到暂存队列（Buffer Queue）。该队列专门用来积压和倒计时，<strong>不能配置任何消费者</strong>。</p>
+<p><strong>2.暂存队列 TTL 到期：</strong>触发死信转移。</p>
+<p>消息在暂存队列中停留，直到达到预设的 TTL（Time-To-Live）。</p>
+<p><strong>3.Broker 自动路由至 DLX：</strong>重定向到业务交换机。</p>
+<p>TTL 到期后消息变为死信，Broker 根据暂存队列绑定的 <code>x-dead-letter-exchange</code> 和 <code>x-dead-letter-routing-key</code> 将其转发给死信交换机。</p>
+<p><strong>4.目标队列接收并消费：</strong>延迟时间结束，执行业务。</p>
+<p>死信交换机将消息路由到最终的业务队列，监听该队列的消费者接收到消息并执行业务（如取消超时未支付订单）。</p>
+<p><strong>Spring Boot 配置代码示例</strong></p>
+<pre><code class="language-java">@Configuration
+public class DelayRabbitConfig {
+
+    // 1. 声明最终消费的业务交换机与队列
+    @Bean
+    public DirectExchange businessExchange() {
+        return new DirectExchange(&quot;business.exchange&quot;);
+    }
+
+    @Bean
+    public Queue businessQueue() {
+        return new Queue(&quot;business.queue&quot;);
+    }
+
+    @Bean
+    public Binding businessBinding() {
+        return BindingBuilder.bind(businessQueue()).to(businessExchange()).with(&quot;business.key&quot;);
+    }
+
+    // 2. 声明暂存队列：绑定死信参数与队列级 TTL（如 30 分钟）
+    @Bean
+    public Queue delayBufferQueue() {
+        Map&lt;String, Object&gt; args = new HashMap&lt;&gt;();
+        args.put(&quot;x-dead-letter-exchange&quot;, &quot;business.exchange&quot;);      // 过期后发往业务交换机
+        args.put(&quot;x-dead-letter-routing-key&quot;, &quot;business.key&quot;);       // 业务路由 Key
+        args.put(&quot;x-message-ttl&quot;, 30 * 60 * 1000);                   // 统一延迟 30 分钟
+
+        return new Queue(&quot;delay.buffer.queue&quot;, true, false, false, args);
+    }
+}
+</code></pre>
+<p><strong>致命踩坑点：队头阻塞问题（Head-of-Line Blocking）</strong></p>
+<p>如果在发送单条消息时动态设置消息的 TTL（如 <code>messageProperties.setExpiration("10000")</code>），会导致<strong>队头阻塞</strong>：</p>
+<ul>
+<li><strong>原理</strong>：RabbitMQ 只会检查<strong>队列头部</strong>的消息是否过期。</li>
+<li><strong>现象</strong>：如果先入队了一条 TTL 为 30 分钟的消息，紧接着入队了一条 TTL 为 10 秒的消息，后入队的消息<strong>无法按时过期</strong>，必须等队头 30 分钟的消息过期被移走后才会被处理。</li>
+</ul>
+<p><strong>最佳实践建议</strong></p>
+<ul>
+<li><strong>定长延迟阶梯</strong>：如果延迟时间相对固定（如 5 秒、10 分钟、30 分钟），针对每个时间段分别建一个暂存队列，不要给单条消息设动态 TTL。</li>
+<li><strong>任意动态延迟</strong>：如果需要精确到任意秒级的动态延迟，建议直接使用官方的 <strong><code>rabbitmq-delayed-message-exchange</code></strong> 插件，该插件在 Exchange 层维护基于时间轮（Time Wheel）的延迟逻辑，从根本上解决队头阻塞。</li>
+</ul>
+<h2 id="sec-2">2. DelayExchange插件</h2>
+<p>正常情况下，RabbitMQ 的交换机（Exchange）是不存储消息的，它只负责路由。 但安装了该插件后，会新增一种交换机类型：<code>x-delayed-message</code>。</p>
+<ol>
+<li><strong>暂存消息：</strong> 当生产者发送带有延迟时间标记的消息到该交换机时，交换机<strong>不会立即路由</strong>，而是将消息暂存在 RabbitMQ 的内部数据库（Mnesia）中。</li>
+<li><strong>到期路由：</strong> 交换机会在内部启动定时器，当消息的延迟时间到达后，交换机才会根据 Routing Key 将消息投递到绑定的目标队列中。</li>
+<li><strong>消费：</strong> 消费者在目标队列中监听并正常消费消息。</li>
+</ol>
+<h3 id="sec-3">1. 部署</h3>
+<p><strong>第一阶段：准备插件文件</strong></p>
+<ol>
+<li>根据你的 RabbitMQ 版本（如 <code>3.12</code>），去官方 GitHub 发布页下载对应的 <code>.ez</code> 格式插件包（例如：<code>rabbitmq_delayed_message_exchange-3.12.0.ez</code>）。插件下载地址：<a href="https://github.com/rabbitmq/rabbitmq-delayed-message-exchange">GitHub - rabbitmq/rabbitmq-delayed-message-exchange: Delayed Messaging for RabbitMQ</a></li>
+<li>先将文件下载到你的物理机（Windows）电脑上。</li>
+</ol>
+<p><strong>第二阶段：Windows -&gt; Linux 虚拟机</strong></p>
+<ol>
+<li>打开你常用的 SSH 客户端工具（如 FinalShell、Xftp、MobaXterm 等），连接到你的 Linux 虚拟机。</li>
+<li>将 Windows 上的 <code>.ez</code> 文件拖拽或上传到虚拟机内部的某个目录下（例如上传到 <code>/root</code> 目录）。</li>
+</ol>
+<p><strong>第三阶段：Linux 虚拟机 -&gt; Docker 容器</strong></p>
+<ol>
+<li>
+<p>在虚拟机的 SSH 终端里，使用 <code>cd</code> 命令切换到你刚才存放文件的目录。</p>
+</li>
+<li>
+<p>执行 <code>docker cp</code> 命令，将宿主机上的文件强行拷贝到 RabbitMQ 容器的官方插件目录中：</p>
+</li>
+</ol>
+<p><code>bash
+   docker cp rabbitmq_delayed_message_exchange-3.12.0.ez rabbitmq:/plugins</code></p>
+<p><em>(注：命令中的 <code>rabbitmq</code> 是你的容器名称，<code>/plugins</code> 是容器内的目标路径)</em></p>
+<p><strong>第四阶段：激活与重启</strong></p>
+<ol>
+<li>在虚拟机终端里，通过 <code>docker exec</code> 进入容器内部执行开启插件的命令：</li>
+</ol>
+<p><code>bash
+   docker exec -it rabbitmq rabbitmq-plugins enable rabbitmq_delayed_message_exchange</code></p>
+<ol start="2">
+<li>重启该容器，让配置彻底加载并生效：</li>
+</ol>
+<p><code>bash
+   docker restart rabbitmq</code></p>
+<p><em>(注：只要执行过一次 enable，配置就会自启动，后续重启虚拟机或容器都不需要再重新配置)</em></p>
+<p><strong>第五阶段：最终验证</strong></p>
+<ol>
+<li>在 Windows 浏览器中打开 RabbitMQ 管理后台（<a href="http://192.168.146.130:15672">http://192.168.146.130:15672</a>）。</li>
+<li>点击 <strong>Exchanges</strong> 标签页，展开底部的 <strong>Add a new exchange</strong> 面板。</li>
+<li>点击 <strong>Type</strong> 旁边的下拉菜单，如果列表里出现了 <strong><code>x-delayed-message</code></strong> 选项，即代表部署圆满成功。</li>
+</ol>
+<h3 id="sec-4">2. 声明延迟交换机</h3>
+<p>基于注解方式：</p>
+<pre><code class="language-java">@RabbitListener(bindings = @QueueBinding(
+        value = @Queue(name = &quot;delay.queue&quot;, durable = &quot;true&quot;),
+        exchange = @Exchange(name = &quot;delay.direct&quot;, delayed = &quot;true&quot;),
+        key = &quot;delay&quot;
+))
+public void listenDelayMessage(String msg){
+    log.info(&quot;接收到delay.queue的延迟消息：{}&quot;, msg);
+}
+</code></pre>
+<p>基于<code>@Bean</code>的方式：</p>
+<pre><code class="language-java">@Slf4j
+@Configuration
+public class DelayExchangeConfig {
+
+    @Bean
+    public DirectExchange delayExchange(){
+        return ExchangeBuilder
+                .directExchange(&quot;delay.direct&quot;) // 指定交换机类型和名称
+                .delayed() // 设置delay的属性为true
+                .durable(true) // 持久化
+                .build();
+    }
+
+    @Bean
+    public Queue delayedQueue(){
+        return new Queue(&quot;delay.queue&quot;);
+    }
+
+    @Bean
+    public Binding delayQueueBinding(){
+        return BindingBuilder.bind(delayedQueue()).to(delayExchange()).with(&quot;delay&quot;).noargs();
+    }
+}
+
+</code></pre>
+<h3 id="sec-5">3. 发送延迟消息</h3>
+<p>发送消息时，必须通过x-delay属性设定延迟时间：</p>
+<pre><code class="language-java">@Test
+void testPublisherDelayMessage() {
+    // 1.创建消息
+    String message = &quot;hello, delayed message&quot;;
+    // 2.发送消息，利用消息后置处理器添加消息头
+    rabbitTemplate.convertAndSend(&quot;delay.direct&quot;, &quot;delay&quot;, message, msg -&gt; {
+    // 依然使用 Spring 提供的便捷方法
+    msg.getMessageProperties().setHeader(&quot;x-delay&quot;, delayMillis);
+    return msg;
+});
+}
+</code></pre>
+<h2 id="sec-6">3. 对比</h2>
+<p>死信队列（TTL + DLX）方案是基于原生队列存活过期的<strong>固定阶梯延时</strong>实现，而延迟插件（<code>rabbitmq-delayed-message-exchange</code>）则是基于 Exchange 内部存储机制的<strong>任意动态延时</strong>实现。</p>
+<table>
+<thead>
+<tr>
+<th><strong>比较维度</strong></th>
+<th><strong>死信队列方案（TTL + DLX）</strong></th>
+<th><strong>延迟交换机插件方案</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>实现原理</strong></td>
+<td>消息在暂存 Queue 存活到期后，作为死信由 DLX 转发至业务 Queue</td>
+<td>消息暂存在 Exchange 内部存储（Mnesia），到期后再路由给 Queue</td>
+</tr>
+<tr>
+<td><strong>任意动态延时</strong></td>
+<td>❌ 仅建议固定阶梯延时（消息级 TTL 会引发队头阻塞）</td>
+<td>✅ 支持单条消息指定任意秒级/毫秒级精确延时</td>
+</tr>
+<tr>
+<td><strong>队头阻塞风险</strong></td>
+<td>⚠️ 单队列多 TTL 时存在严重队头阻塞</td>
+<td>✅ 彻底解决队头阻塞</td>
+</tr>
+<tr>
+<td><strong>环境依赖</strong></td>
+<td>✅ 原生支持，无需安装任何插件</td>
+<td>⚠️ 需要所有 Broker 节点单独安装插件</td>
+</tr>
+<tr>
+<td><strong>拓扑复杂度</strong></td>
+<td>⚠️ 较高（需要维护暂存 Queue、死信 Exchange 与目标 Queue）</td>
+<td>✅ 极低（仅需 1 个延迟 Exchange + 1 个目标 Queue）</td>
+</tr>
+<tr>
+<td><strong>性能与高可用</strong></td>
+<td>✅ 基于标准队列存储与复制，高并发吞吐能力强，高可用成熟</td>
+<td>⚠️ 消息积压在 Exchange 层，超大规模（百万级）时内存/磁盘压力大</td>
+</tr>
+</tbody>
+</table>
+<p><strong>死信队列方案（TTL + DLX）</strong></p>
+<ul>
+<li><strong>优势</strong>：开箱即用，无需改造 Broker 环境；依赖 RabbitMQ 原生成熟的队列持久化与镜像/ Quorum 机制，性能稳定，抗突发大流量能力强。</li>
+<li><strong>劣势</strong>：无法优雅支持任意动态时间；若需要多种延迟时间（如 5s、10m、30m），必须配置多个对应的暂存队列。</li>
+<li><strong>适用场景</strong>：延时时间固定且规范的业务场景，例如电商订单统一 30 分钟未支付自动取消、支付结果阶梯式回调通知（如 10s、30s、1m、5m）。</li>
+</ul>
+<p><strong>延迟交换机插件方案</strong></p>
+<ul>
+<li><strong>优势</strong>：架构极简，无需针对不同延时建多个队列；单条消息直接通过 Header 指定 <code>x-delay</code> 毫秒值即可完成精准动态延时。</li>
+<li><strong>劣势</strong>：强依赖第三方插件；延时消息存储在 Exchange 的 Mnesia 数据库中而非标准 Queue 中，当延迟消息量巨大或节点宕机恢复时，对资源开销与恢复时间有一定影响。</li>
+<li><strong>适用场景</strong>：延时时间高度个性化、动态不固定的场景，例如用户自定义定时提醒（如“预定明天 14:20 提醒”）、会议预约通知、中小型规模的个性化任务调度。</li>
+</ul>
+<p><strong>选型标准</strong>：延迟时间固定或消息吞吐量极大时，优先选择 <strong>DLX + TTL 方案</strong>；延迟时间完全不固定且追求代码与架构简捷时，优先选择 <strong>延迟插件方案</strong>。</p>
+  </article>
+  <div class="pn"><a class="note" href="6.html">← 上一篇：6. 消费者的可靠性</a><span></span></div>
+</div>
+</div>
+<footer class="page-foot"><span>mq-note / 7.延迟消息.md</span><span>MQ 实验台 · 静态渲染</span></footer>
+<script>
+(function(){
+  var links=[].slice.call(document.querySelectorAll('.toc a[href^="#"]'));
+  if(!links.length)return;
+  var map={};links.forEach(function(a){map[a.getAttribute("href").slice(1)]=a;});
+  var heads=[].slice.call(document.querySelectorAll('.md-body h2[id],.md-body h3[id]'));
+  var tops=[];
+  function measure(){tops=heads.map(function(h){return h.getBoundingClientRect().top+window.scrollY;});}
+  function update(){
+    var y=window.scrollY+120,cur=null;
+    for(var i=0;i<heads.length;i++){if(tops[i]<=y)cur=heads[i].id;}
+    links.forEach(function(a){a.classList.remove("cur");});
+    if(cur&&map[cur])map[cur].classList.add("cur");
+  }
+  addEventListener("scroll",update,{passive:true});
+  addEventListener("resize",function(){measure();update();});
+  measure();update();
+})();
+</script>
+</body>
+</html>

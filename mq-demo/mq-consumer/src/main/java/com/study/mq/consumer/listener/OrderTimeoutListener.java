@@ -18,7 +18,7 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 
 /**
- * 订单超时取消监听器 —— 延迟消息的两种方案并存（笔记 6.延迟消息）
+ * 订单超时取消监听器 —— 延迟消息的两种方案并存（笔记 7.延迟消息）
  *
  * 【为什么两个监听器？】
  *  方案A（插件）：demo.order.delay.queue  —— 每条消息自带 x-delay，延迟时间灵活（推荐）
@@ -28,7 +28,7 @@ import java.io.IOException;
  * 【为什么不会出问题？】
  *  markTimeoutCancelled 用状态机 UPDATE orders SET status=2 WHERE status=0：
  *  第一个监听器把订单取消后，第二个监听器执行 SQL 影响行数为 0 —— 幂等，直接跳过。
- *  这正是「状态机幂等」（笔记 5.消费者的可靠性 §4.3）在真实业务里的价值：同一件事来两遍也不会重复执行。
+ *  这正是「状态机幂等」（笔记 6.消费者的可靠性 §4.3）在真实业务里的价值：同一件事来两遍也不会重复执行。
  *
  * 【x-death 头】
  *  方案B 的消息是被 TTL「杀死」的死信，RabbitMQ 会往 x-death 头追加死亡履历

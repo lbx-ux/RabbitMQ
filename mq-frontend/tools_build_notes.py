@@ -11,9 +11,10 @@ NOTES = [
     ('1.RabbitMQ.md',       '1', 'RabbitMQ',          '部署 · 收发消息 · 数据隔离'),
     ('2.RabbitMQ基础.md',    '2', 'RabbitMQ 基础',     '三大核心 · 交换机 · 消息转换器'),
     ('3.数据持久化.md',      '3', '数据持久化',        '持久化 · LazyQueue · Quorum'),
-    ('4.生产者的可靠性.md',  '4', '生产者的可靠性',    '重试 · Confirm/Return · 本地消息表'),
-    ('5.消费者的可靠性.md',  '5', '消费者的可靠性',    '确认 · 重试 · 死信兜底 · 幂等'),
-    ('6.延迟消息.md',        '6', '延迟消息',          '死信交换机 · 延迟插件'),
+    ('4.生产者的可靠性.md',  '4', '生产者的可靠性',    '重试 · Confirm/Return'),
+    ('5.本地消息表.md',      '5', '本地消息表',        '分布式事务 · Confirm闭环 · 定时补偿'),
+    ('6.消费者的可靠性.md',  '6', '消费者的可靠性',    '确认 · 重试 · 死信兜底 · 幂等'),
+    ('7.延迟消息.md',        '7', '延迟消息',          '死信交换机 · 延迟插件'),
 ]
 
 ROOT = os.path.dirname(os.path.abspath(__file__))   # mq-frontend 目录
@@ -148,9 +149,9 @@ for fname, num, title, sub in NOTES:
               '<span class="step"><i>▸</i><span>' + sub + '</span></span></a>\n')
 list_page = (head('学习笔记', 'css/style.css')
              + topbar('notes.html')
-             + '\n<div class="sec"><h2>配套笔记</h2><span class="fine">mq-note 目录 6 篇 · 与代码注释互相引用</span></div>\n'
+             + '\n<div class="sec"><h2>配套笔记</h2><span class="fine">mq-note 目录 7 篇 · 与代码注释互相引用</span></div>\n'
                '<div class="guides" style="grid-template-columns:repeat(3,1fr)">\n' + cards + '</div>\n'
-               '<footer class="page-foot"><span>mq-note / 6 篇学习笔记</span>'
+               '<footer class="page-foot"><span>mq-note / 7 篇学习笔记</span>'
                '<span>MQ 实验台 · 静态渲染</span></footer>\n</body>\n</html>\n')
 io.open(os.path.join(ROOT, 'notes.html'), 'w', encoding='utf-8', newline='\n').write(list_page)
 print('OK notes.html', len(list_page))

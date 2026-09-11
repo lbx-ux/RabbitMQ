@@ -11,7 +11,7 @@ import org.springframework.stereotype.Service;
 import java.time.Duration;
 
 /**
- * 消费幂等服务 —— 对应笔记 5.消费者的可靠性 §4 业务幂等性
+ * 消费幂等服务 —— 对应笔记 6.消费者的可靠性 §4 业务幂等性
  *
  * 【为什么必须幂等？】（笔记 §4 开头要点）
  *  MQ 的投递语义是「至少一次」(at-least-once)：

@@ -11,7 +11,7 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 
 /**
- * 手动确认对照实验 —— 笔记 5.消费者的可靠性 §1 消费者确认机制
+ * 手动确认对照实验 —— 笔记 6.消费者的可靠性 §1 消费者确认机制
  *
  * 【三种确认模式】（笔记 §1）
  *   none   投递即确认，消息立刻删除 —— 消费者挂了消息就丢，别用

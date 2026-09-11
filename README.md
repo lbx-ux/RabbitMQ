@@ -1,9 +1,9 @@
 # RabbitMQ 学习实战项目
 
 以电商「下单 → 余额支付 → 异步通知」为主线的 RabbitMQ 全知识点实战工程。
-每个知识点都有**可以手动触发、亲眼看到现象**的实验，配套 6 篇学习笔记逐节讲解。
+每个知识点都有**可以手动触发、亲眼看到现象**的实验，配套 7 篇学习笔记逐节讲解。
 
-> 配套笔记：`mq-note/` 目录（《1.RabbitMQ》～《6.延迟消息》），代码注释中标注了对应的笔记章节。
+> 配套笔记：`mq-note/` 目录（《1.RabbitMQ》～《7.延迟消息》），代码注释中标注了对应的笔记章节。
 
 ## 学习路线（重要）
 
@@ -35,14 +35,14 @@ mq-demo 综合实战          业务主线：下单 → 支付 → 异步通知 
 │   ├── lab2-basic       :8102  基础 API（对应笔记 2）
 │   ├── lab3-persist     :8103  持久化（对应笔记 3）
 │   ├── lab4-producer    :8104  生产者可靠性（对应笔记 4）
-│   ├── lab5-consumer    :8105  消费者可靠性（对应笔记 5）
-│   └── lab6-delay       :8106  延迟消息（对应笔记 6）
+│   ├── lab5-consumer    :8105  消费者可靠性（对应笔记 6；本地消息表对应笔记 5）
+│   └── lab6-delay       :8106  延迟消息（对应笔记 7）
 ├── mq-demo       综合实战（Maven 聚合：mq-common + mq-publisher :8080 + mq-consumer :8083）
 │   ├── mq-common     公共模块：MqConstants 常量、消息 DTO、拓扑声明、全局 MQ 配置
 │   ├── mq-publisher  生产者服务（下单/支付/本地消息表/补偿）
 │   └── mq-consumer   消费者服务（交易/积分/短信/超时取消/错误重放）
 ├── mq-frontend   MQ 实验台页面：实时观察队列堆积、订单流转、错误消息
-└── mq-note       6 篇学习笔记（《1.RabbitMQ》～《6.延迟消息》）+ 2 篇详解篇
+└── mq-note       7 篇学习笔记（《1.RabbitMQ》～《7.延迟消息》）
 ```
 
 ## 知识点 → 笔记 → 代码 对照表
@@ -59,14 +59,13 @@ mq-demo 综合实战          业务主线：下单 → 支付 → 异步通知 
 | 持久化 / LazyQueue / Quorum | 3.数据持久化 | `mq-labs/lab3-persist` |
 | 生产者重试（阻塞式的坑） | 4.生产者的可靠性 §1 | lab4 `application.yaml` |
 | Publisher Confirm / Return | 4.生产者的可靠性 §2-§3 | lab4 `POST /confirm?scenario=` |
-| 本地消息表 + 定时补偿 | 4.生产者的可靠性 §4 | lab4 `POST /order` + `GET /local-messages` |
-| 消费者确认（none/manual/auto） | 5.消费者的可靠性 §1 | lab5 `POST /manual?msg=` |
-| 本地重试 + 失败兜底 Republish | 5.消费者的可靠性 §2-§3 | lab5 `POST /send-blacklist` |
-| 业务幂等（SETNX + 唯一索引） | 5.消费者的可靠性 §4 | lab5 `POST /send` 重复调用 |
-| → 以上两篇的深度展开篇 | 4.生产者的可靠性-本地消息表 / 5.消费者的可靠性-失败兜底与幂等 | 笔记内含 lab 逐段代码对照 |
-| 死信交换机（手动 ack 拒签） | 6.延迟消息 §1 | lab6 `POST /dlx` |
-| TTL+DLX 延迟 / 队头阻塞大坑 | 6.延迟消息 §2.1 | lab6 `POST /ttl` `/head-blocking` |
-| 延迟插件 x-delayed-message | 6.延迟消息 §2.2 | lab6 `POST /plugin` |
+| 本地消息表 + 定时补偿 | 5.本地消息表 | lab4 `POST /order` + `GET /local-messages` |
+| 消费者确认（none/manual/auto） | 6.消费者的可靠性 §1 | lab5 `POST /manual?msg=` |
+| 本地重试 + 失败兜底 Republish | 6.消费者的可靠性 §2-§3 | lab5 `POST /send-blacklist` |
+| 业务幂等（SETNX + 唯一索引） | 6.消费者的可靠性 §4 | lab5 `POST /send` 重复调用 |
+| 死信交换机（手动 ack 拒签） | 7.延迟消息 §1 | lab6 `POST /dlx` |
+| TTL+DLX 延迟 / 队头阻塞大坑 | 7.延迟消息 §2.1 | lab6 `POST /ttl` `/head-blocking` |
+| 延迟插件 x-delayed-message | 7.延迟消息 §2.2 | lab6 `POST /plugin` |
 
 ### 综合实战（mq-demo 业务主线）
 

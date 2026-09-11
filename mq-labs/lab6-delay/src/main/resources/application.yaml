@@ -12,7 +12,7 @@ spring:
     virtual-host: /
     listener:
       simple:
-        # 手动确认 —— 笔记 6.延迟消息 §1「结合手动确认的具体工作流程」：
+        # 手动确认 —— 笔记 7.延迟消息 §1「结合手动确认的具体工作流程」：
         # DLX 死信链路的关键一步就是消费者在 catch 里调 channel.basicNack(tag, false, false)，
         # 所以本 lab 全局用 manual 模式，每个监听器自己决定 ack 还是 nack，与笔记五步流程一一对应。
         acknowledge-mode: manual

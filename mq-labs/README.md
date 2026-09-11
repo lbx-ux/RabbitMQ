@@ -9,8 +9,8 @@
 | lab2-basic | 2.RabbitMQ基础 | 8102 | Work 能者多劳 / Direct / Fanout / Topic / JSON 消息转换器 |
 | lab3-persist | 3.数据持久化 | 8103 | classic 持久化 vs LazyQueue vs Quorum 队列 |
 | lab4-producer | 4.生产者的可靠性 | 8104 | Confirm/Return 三种回执、本地消息表 + 定时补偿 |
-| lab5-consumer | 5.消费者的可靠性 | 8105 | 手动 ack 对照、失败重试、死信兜底落库重放、幂等双保险 |
-| lab6-delay | 6.延迟消息 | 8106 | 死信交换机+手动确认拒签、TTL+DLX、延迟插件、队头阻塞大坑复现 |
+| lab5-consumer | 6.消费者的可靠性 | 8105 | 手动 ack 对照、失败重试、死信兜底落库重放、幂等双保险 |
+| lab6-delay | 7.延迟消息 | 8106 | 死信交换机+手动确认拒签、TTL+DLX、延迟插件、队头阻塞大坑复现 |
 
 （笔记 1.RabbitMQ 是部署与管理台操作，没有代码，不需要 lab。）
 
@@ -22,7 +22,7 @@
 
 ## 环境准备
 
-1. RabbitMQ（管理台 15672），延迟消息 lab 需要 `rabbitmq_delayed_message_exchange` 插件（部署见笔记 1/6）。
+1. RabbitMQ（管理台 15672），延迟消息 lab 需要 `rabbitmq_delayed_message_exchange` 插件（部署见笔记 1/7）。
 2. lab4 / lab5 需要 MySQL（连 mq_demo 库，表名 lab4_/lab5_ 前缀，启动自动建表）；lab5 还需要 Redis。
 3. 所有 lab 默认连 `192.168.146.130:5672`（admin/admin），与 mq-demo 共用同一个 broker，
    队列/交换机全部带 `labN.` 前缀，管理台里一眼分清哪个实验建了哪些拓扑。

@@ -27,7 +27,7 @@ spring:
     virtual-host: /
     connection-timeout: 1s
 
-    # ==================== 消费者配置（笔记 5.消费者的可靠性 §1/§2/§3）====================
+    # ==================== 消费者配置（笔记 6.消费者的可靠性 §1/§2/§3）====================
     listener:
       simple:
         # prefetch：每个消费者每次最多预取 1 条消息，处理完才取下一条。
@@ -36,7 +36,7 @@ spring:
         #   prefetch=1 = 谁空闲谁先领，充分利用每个消费者的能力。
         prefetch: 1
 
-        # acknowledge-mode 消费者确认模式（笔记 5.消费者的可靠性 §1 消费者确认机制）：
+        # acknowledge-mode 消费者确认模式（笔记 6.消费者的可靠性 §1 消费者确认机制）：
         #   none   投递即 ack，消息立刻删除 —— 不安全，别用
         #   manual 手动调 channel.basicAck/basicNack —— 灵活但业务入侵
         #   auto   Spring AOP 环绕增强：正常执行->ack；
@@ -44,7 +44,7 @@ spring:
         #          消息转换/校验异常(MessageConversionException)->reject（丢弃）
         acknowledge-mode: auto
 
-        # 消费者失败重试：本地重试而不是无限 requeue 回 MQ（笔记 5.消费者的可靠性 §2 失败重试机制）
+        # 消费者失败重试：本地重试而不是无限 requeue 回 MQ（笔记 6.消费者的可靠性 §2 失败重试机制）
         retry:
           enabled: true             # 开启本地重试（失败消息不会无限 requeue）
           initial-interval: 1000ms  # 第一次重试等 1 秒

@@ -13,7 +13,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * lab5 拓扑 + 失败兜底配置 —— 笔记 5.消费者的可靠性 §3 失败处理策略
+ * lab5 拓扑 + 失败兜底配置 —— 笔记 6.消费者的可靠性 §3 失败处理策略
  *
  * 【背景】（笔记原话）
  *  消费者本地重试（application.yaml 的 listener.simple.retry）耗尽后，Spring 默认策略是

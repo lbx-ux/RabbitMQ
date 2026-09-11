@@ -11,16 +11,16 @@ import org.springframework.stereotype.Service;
 import java.time.Duration;
 
 /**
- * 消费幂等服务 —— 对应笔记 5.消费者的可靠性 §4 业务幂等性
+ * 消费幂等服务 —— 对应笔记 6.消费者的可靠性 §4 业务幂等性
  *
- * 【为什么必须幂等？】（笔记 5.消费者的可靠性 §4 开头要点）
+ * 【为什么必须幂等？】（笔记 6.消费者的可靠性 §4 开头要点）
  *  MQ 的投递语义是「至少一次」(at-least-once)：
  *    - 生产者确认失败会重发（本 demo 的补偿任务就干这事）
  *    - 消费者 nack 后消息重新入队会再次投递
  *    - 消费者处理到一半宕机，MQ 会把 unacked 消息重新投给别人
  *  同一条业务消息可能到达 2~N 次，所以「加积分」「改订单」这类非幂等操作必须自己防重。
  *
- * 【企业级标准处理流程】（笔记 5.消费者的可靠性 §4.3 的 7 步，本类的 tryConsume + complete/rollback 实现它）
+ * 【企业级标准处理流程】（笔记 6.消费者的可靠性 §4.3 的 7 步，本类的 tryConsume + complete/rollback 实现它）
  *   1. 收到消息，提取业务流水号 bizId（= messageId）
  *   2. Redis SETNX 抢锁：失败说明正在处理或已处理过 -> 直接 ACK 丢弃（高性能挡板）
  *   3. 开启数据库事务
@@ -42,7 +42,7 @@ public class IdempotentService {
     private final ConsumedMessageMapper consumedMessageMapper;
 
     private static final String KEY_PREFIX = "mq:idempotent:";
-    /** 幂等 key 过期时间：24 小时（防止 Redis 死锁 + 控制内存，笔记 5.消费者的可靠性 §4.2 原话） */
+    /** 幂等 key 过期时间：24 小时（防止 Redis 死锁 + 控制内存，笔记 6.消费者的可靠性 §4.2 原话） */
     private static final Duration KEY_TTL = Duration.ofHours(24);
 
     /**
