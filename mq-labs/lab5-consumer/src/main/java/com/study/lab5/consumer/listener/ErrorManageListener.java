@@ -21,6 +21,12 @@ import java.util.Map;
  *  SmsListener 业务抛异常 -> 本地重试 3 次（1s/2s/4s）耗尽 -> RepublishMessageRecoverer
  *  把消息转发到 lab5.error.queue，并附加失败头信息 -> 本类消费并落库。
  *
+ * 【术语澄清】严格说 error.queue 不是协议意义的「死信队列」：
+ *  broker 死信 = reject/nack(requeue=false)/TTL/溢出 + 队列声明 DLX，由 broker 自动搬运、
+ *  盖 x-death 头（lab6 的 DLX 路径）。本队列是【应用转发】：本地重试全程在应用内，
+ *  broker 从未判定消息死亡，所以没有 x-death 头，只有 x-exception-* 等应用附加的头。
+ *  称它「死信」是业务意义——所有自动处理机会已耗尽，只能转人工。
+ *
  * 【fail_reason 教训（真实事故）】
  *  x-exception-message 头装的是完整异常堆栈，可能非常长。曾经 fail_reason 用 VARCHAR(512)，
  *  超长时 insert 直接报 MysqlDataTruncation -> 死信消费失败 -> 消息又被转回 error.queue，
@@ -38,12 +44,11 @@ public class ErrorManageListener {
 
     /**
      * 消费死信（异常消息）。
-     * RepublishMessageRecoverer 转发时会附加的头：
-     *   x-exception-message     完整异常信息（超长！所以列用 TEXT + 截断）
+     * RepublishMessageRecoverer 转发时会附加的头（注意：没有 x-death，那是 broker 死信路径才有的）：
+     *   x-exception-message     最后一次异常信息（超长！所以列用 TEXT + 截断）
      *   x-exception-stacktrace  异常堆栈
      *   x-original-exchange     原始交换机
      *   x-original-routing-key  原始路由键
-     *   x-death                 死信原因等
      */
     @RabbitListener(queues = ConsumerTopology.ERROR_QUEUE)
     public void listenErrorQueue(Message message) {
@@ -52,13 +57,10 @@ public class ErrorManageListener {
 
         // RepublishMessageRecoverer 转发时附加的头：最后一次异常信息
         String failReason = String.valueOf(headers.getOrDefault("x-exception-message", "unknown"));
-        // x-death 头：消息死亡履历（哪个队列、原因、次数）
-        Object xDeath = headers.get("x-death");
         log.warn("[错误管理员] 收到死信: exchange={} routingKey={} reason={}",
                 headers.get(RepublishMessageRecoverer.X_ORIGINAL_EXCHANGE),
                 headers.get(RepublishMessageRecoverer.X_ORIGINAL_ROUTING_KEY),
                 failReason.substring(0, Math.min(80, failReason.length())));
-        log.warn("[错误管理员] 死亡履历(x-death): {}", xDeath);
 
         // 防御性截断：即便列已经是 TEXT，代码层面再截断一次（万一未来有人改回 VARCHAR）
         if (failReason != null && failReason.length() > MAX_REASON_LENGTH) {

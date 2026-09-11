@@ -1,7 +1,7 @@
 package com.study.mq.publisher.service;
 
+import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.study.mq.common.constant.MqConstants;
 import com.study.mq.common.message.PaySuccessMessage;
 import com.study.mq.publisher.entity.LocalMessage;
@@ -37,7 +37,6 @@ public class PayService {
 
     private final ReliableMqSender reliableMqSender;
     private final LocalMessageMapper localMessageMapper;
-    private final ObjectMapper objectMapper;
 
     /**
      * 模拟用户账户余额（学习 demo 简化：真实项目这是用户服务/账户服务的表）
@@ -75,7 +74,8 @@ public class PayService {
                 MqConstants.PAY_TOPIC_EXCHANGE, MqConstants.KEY_PAY_SUCCESS);
 
         // ================= 4. 事务提交后自动发送（ConfirmCallback 已挂） ================
-        reliableMqSender.sendAfterCommit(messageId, "PAY_SUCCESS", message,
+        // messageType 已在 saveMessage 落库时写入，这里无需重复传
+        reliableMqSender.sendAfterCommit(messageId, message,
                 MqConstants.PAY_TOPIC_EXCHANGE, MqConstants.KEY_PAY_SUCCESS);
 
         log.info("[支付] 支付完成，pay.success 消息已投递 MQ，业务直接返回（异步通知交易/积分/短信服务）");
@@ -115,8 +115,8 @@ public class PayService {
             return false;
         }
         try {
-            // 把库里存的 JSON 反序列化回对象再发（保证与原始消息一致）
-            Object payload = objectMapper.readValue(msg.getContent(), Object.class);
+            // 把库里存的 JSON 还原成对象再发（保证与原始消息一致）—— Hutool 解析为 JSONObject
+            Object payload = JSONUtil.parse(msg.getContent());
             reliableMqSender.send(msg.getMessageId(), msg.getExchange(), msg.getRoutingKey(), payload);
             msg.setRetryCount(msg.getRetryCount() + 1);
             // 指数退避：下次重试时间 = now + 30s * 2^retryCount

@@ -1,7 +1,7 @@
 package com.study.mq.publisher.service;
 
+import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.study.mq.publisher.entity.LocalMessage;
 import com.study.mq.publisher.mapper.LocalMessageMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -34,14 +34,11 @@ public class ReliableMqSender {
 
     private final RabbitTemplate rabbitTemplate;
     private final LocalMessageMapper localMessageMapper;
-    private final ObjectMapper objectMapper;
 
     public ReliableMqSender(RabbitTemplate rabbitTemplate,
-                            LocalMessageMapper localMessageMapper,
-                            ObjectMapper objectMapper) {
+                            LocalMessageMapper localMessageMapper) {
         this.rabbitTemplate = rabbitTemplate;
         this.localMessageMapper = localMessageMapper;
-        this.objectMapper = objectMapper;
     }
 
     /**
@@ -55,8 +52,8 @@ public class ReliableMqSender {
             LocalMessage msg = new LocalMessage();
             msg.setMessageId(messageId);
             msg.setMessageType(messageType);
-            // 消息体统一转成 JSON 存储 —— 与真正发到 MQ 的内容保持一致
-            msg.setContent(objectMapper.writeValueAsString(payload));
+            // 消息体统一转成 JSON 存储（Hutool）—— 与真正发到 MQ 的内容保持一致
+            msg.setContent(JSONUtil.toJsonStr(payload));
             msg.setExchange(exchange);
             msg.setRoutingKey(routingKey);
             msg.setStatus(0); // SENDING
@@ -124,7 +121,7 @@ public class ReliableMqSender {
      *
      * @param payload 发送的消息对象
      */
-    public void sendAfterCommit(String messageId, String messageType,
+    public void sendAfterCommit(String messageId,
                                 Object payload, String exchange, String routingKey) {
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             // 当前存在事务：注册 afterCommit 回调，等提交成功后自动发送

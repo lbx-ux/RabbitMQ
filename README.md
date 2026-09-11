@@ -42,7 +42,7 @@ mq-demo 综合实战          业务主线：下单 → 支付 → 异步通知 
 │   ├── mq-publisher  生产者服务（下单/支付/本地消息表/补偿）
 │   └── mq-consumer   消费者服务（交易/积分/短信/超时取消/错误重放）
 ├── mq-frontend   MQ 实验台页面：实时观察队列堆积、订单流转、错误消息
-└── mq-note       6 篇学习笔记（《1.RabbitMQ》～《6.延迟消息》）
+└── mq-note       6 篇学习笔记（《1.RabbitMQ》～《6.延迟消息》）+ 2 篇详解篇
 ```
 
 ## 知识点 → 笔记 → 代码 对照表
@@ -63,6 +63,7 @@ mq-demo 综合实战          业务主线：下单 → 支付 → 异步通知 
 | 消费者确认（none/manual/auto） | 5.消费者的可靠性 §1 | lab5 `POST /manual?msg=` |
 | 本地重试 + 失败兜底 Republish | 5.消费者的可靠性 §2-§3 | lab5 `POST /send-blacklist` |
 | 业务幂等（SETNX + 唯一索引） | 5.消费者的可靠性 §4 | lab5 `POST /send` 重复调用 |
+| → 以上两篇的深度展开篇 | 4.生产者的可靠性-本地消息表 / 5.消费者的可靠性-失败兜底与幂等 | 笔记内含 lab 逐段代码对照 |
 | 死信交换机（手动 ack 拒签） | 6.延迟消息 §1 | lab6 `POST /dlx` |
 | TTL+DLX 延迟 / 队头阻塞大坑 | 6.延迟消息 §2.1 | lab6 `POST /ttl` `/head-blocking` |
 | 延迟插件 x-delayed-message | 6.延迟消息 §2.2 | lab6 `POST /plugin` |
