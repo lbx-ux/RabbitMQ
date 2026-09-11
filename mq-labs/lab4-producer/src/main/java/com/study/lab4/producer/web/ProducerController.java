@@ -7,6 +7,7 @@ import com.study.lab4.producer.service.LocalMessageSender;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -45,8 +46,7 @@ public class ProducerController {
     @PostMapping("/confirm")
     public String confirm(@RequestParam String scenario) {
         String msg = "confirm test: " + scenario + " " + LocalDateTime.now();
-        org.springframework.amqp.rabbit.connection.CorrelationData cd =
-                new org.springframework.amqp.rabbit.connection.CorrelationData("CONFIRM-" + scenario);
+        CorrelationData cd = new CorrelationData("CONFIRM-" + scenario);
         // 局部 ConfirmCallback（笔记 §3.3.2）：随消息携带 CorrelationData 才有回执通道
         cd.getFuture().addCallback(result -> {
             if (result != null && result.isAck()) {
@@ -89,8 +89,8 @@ public class ProducerController {
         // 第 1 步：事务内落库（本方法有 @Transactional，落库与「业务」同生共死）
         sender.saveMessage(messageId, "ORDER_PAID", payload,
                 ProducerTopology.ORDER_EXCHANGE, ProducerTopology.ORDER_KEY);
-        // 第 2 步：注册事务提交后自动发送
-        sender.sendAfterCommit(messageId, "ORDER_PAID", payload,
+        // 第 2 步：注册事务提交后自动发送（messageType 落库时已存，发送参数里不再重复）
+        sender.sendAfterCommit(messageId, payload,
                 ProducerTopology.ORDER_EXCHANGE, ProducerTopology.ORDER_KEY);
         return "下单完成 messageId=" + messageId + "，看控制台 落库->发送->ack 全流程";
     }

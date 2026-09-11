@@ -1,7 +1,7 @@
 package com.study.lab4.producer.service;
 
+import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.study.lab4.producer.entity.LocalMessage;
 import com.study.lab4.producer.mapper.LocalMessageMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -33,14 +33,11 @@ public class LocalMessageSender {
 
     private final RabbitTemplate rabbitTemplate;
     private final LocalMessageMapper localMessageMapper;
-    private final ObjectMapper objectMapper;
 
     public LocalMessageSender(RabbitTemplate rabbitTemplate,
-                              LocalMessageMapper localMessageMapper,
-                              ObjectMapper objectMapper) {
+                              LocalMessageMapper localMessageMapper) {
         this.rabbitTemplate = rabbitTemplate;
         this.localMessageMapper = localMessageMapper;
-        this.objectMapper = objectMapper;
     }
 
     /**
@@ -53,8 +50,8 @@ public class LocalMessageSender {
             LocalMessage msg = new LocalMessage();
             msg.setMessageId(messageId);
             msg.setMessageType(messageType);
-            // 消息体统一转 JSON 存储 —— 与真正发到 MQ 的内容保持一致
-            msg.setContent(objectMapper.writeValueAsString(payload));
+            // 消息体统一转 JSON 存储（Hutool）—— 与真正发到 MQ 的内容保持一致
+            msg.setContent(JSONUtil.toJsonStr(payload));
             msg.setExchange(exchange);
             msg.setRoutingKey(routingKey);
             msg.setStatus(0); // SENDING
@@ -103,7 +100,7 @@ public class LocalMessageSender {
      * 便捷方法：注册「事务提交后再发送」的钩子。
      * 【为什么不在事务里直接发？】事务最终回滚的话，消费者会收到「业务根本没发生」的幽灵消息。
      */
-    public void sendAfterCommit(String messageId, String messageType,
+    public void sendAfterCommit(String messageId,
                                 Object payload, String exchange, String routingKey) {
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
@@ -150,7 +147,7 @@ public class LocalMessageSender {
             return false;
         }
         try {
-            Object payload = objectMapper.readValue(msg.getContent(), Object.class);
+            Object payload = JSONUtil.parse(msg.getContent());
             send(msg.getMessageId(), msg.getExchange(), msg.getRoutingKey(), payload);
             msg.setRetryCount(msg.getRetryCount() + 1);
             // 指数退避：下次重试时间 = now + 30s * 2^retryCount（30s -> 60s -> 120s）

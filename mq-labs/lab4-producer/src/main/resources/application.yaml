@@ -26,6 +26,9 @@ spring:
     # 【大坑】笔记原话：这个重试是【阻塞式】的 —— 等待期间生产者线程被挂起，
     # 高并发下线程会被大量占满，影响整个服务。所以只适合低频核心消息，海量消息别开。
     template:
+      # 核心参数：必须设为 true，路由失败时才会触发 ReturnsCallback；若为 false，MQ 会直接丢弃该消息
+      # （Boot 2.7 中 publisher-returns=true 已隐含 mandatory=true，这里显式声明便于对照笔记）
+      mandatory: true
       retry:
         enabled: true             # 开启生产者重试
         initial-interval: 1000ms  # 首次重试间隔 1 秒

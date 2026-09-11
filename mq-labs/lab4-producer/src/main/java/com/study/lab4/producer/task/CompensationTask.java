@@ -1,5 +1,6 @@
 package com.study.lab4.producer.task;
 
+import com.study.lab4.producer.entity.LocalMessage;
 import com.study.lab4.producer.service.LocalMessageSender;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -29,12 +30,12 @@ public class CompensationTask {
     /** 每 30 秒扫一次（学习演示用高频；生产一般 1~5 分钟） */
     @Scheduled(fixedDelay = 30_000)
     public void compensate() {
-        List<com.study.lab4.producer.entity.LocalMessage> pending = sender.findTimeoutUnconfirmed();
+        List<LocalMessage> pending = sender.findTimeoutUnconfirmed();
         if (pending.isEmpty()) {
             return;
         }
         log.info("[补偿任务] 发现 {} 条超时未确认消息，开始重发", pending.size());
-        for (com.study.lab4.producer.entity.LocalMessage msg : pending) {
+        for (LocalMessage msg : pending) {
             sender.retrySend(msg);
         }
     }
